@@ -58,6 +58,108 @@ describe('autotask_create_time_entry', () => {
     expect(propsOf('autotask_create_time_entry')).not.toHaveProperty('projectID');
   });
 
+  test('no description still offers a project as a parent for time', () => {
+    // Removing the parameter left prose behind: the `category` description
+    // continued to read "when no ticket/task/project is specified", pointing
+    // readers at a parameter that no longer exists. Prose is part of the
+    // interface for an LLM-facing tool -- it is what the model reads to decide
+    // what to pass -- so a stale option in a description is a real defect, not
+    // a typo.
+    //
+    // The word "project" is not the defect; a project offered as a PARAMETER
+    // is. The tool and taskID descriptions mention projects deliberately, to
+    // say that project work is logged against a task. So this matches the shape
+    // the stale text had rather than the word: an earlier version of this test
+    // banned "project" outright and failed on that deliberate taskID prose.
+    const AS_A_PARAMETER = /\/\s*project\b|\bprojectID\b/i;
+    const tool = TOOL_DEFINITIONS.find(t => t.name === 'autotask_create_time_entry')!;
+    const props = propsOf('autotask_create_time_entry') as Record<string, { description?: string }>;
+    const texts: Array<[string, string]> = [
+      ['<tool description>', tool.description],
+      ...Object.entries(props).map(([n, p]) => [n, p.description ?? ''] as [string, string])
+    ];
+    for (const [where, text] of texts) {
+      expect(`${where}: ${text}`).not.toMatch(AS_A_PARAMETER);
+    }
+  });
+
+  // resourceName and category are convenience INPUTS, resolved into resourceID
+  // and internalBillingCodeID. Neither is a TimeEntry field. Both used to be
+  // deleted inside the branch that consumed them, so a call shape that skipped
+  // that branch forwarded the raw input to Autotask — which ignores unknown
+  // fields on write, so it vanished silently.
+  test('never sends resourceName when a resourceID is also given', async () => {
+    // The leaking shape: the resolve branch is skipped because resourceID is
+    // present, so the delete nested inside it never ran.
+    const service = new AutotaskService(mockConfig, mockLogger);
+    const spy = jest.spyOn(service, 'createTimeEntry').mockResolvedValue(1 as any);
+    const resolve = jest.spyOn(service, 'resolveResourceByName');
+    const handler = new AutotaskToolHandler(service, mockLogger);
+
+    await handler.callTool('autotask_create_time_entry', {
+      ...baseArgs, resourceName: 'Will Spence'
+    });
+
+    const payload = spy.mock.calls[0][0] as Record<string, unknown>;
+    expect('resourceName' in payload).toBe(false);
+    expect(payload.resourceID).toBe(2002);
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  test('still resolves resourceName when no resourceID is given, and does not send it', async () => {
+    const service = new AutotaskService(mockConfig, mockLogger);
+    const spy = jest.spyOn(service, 'createTimeEntry').mockResolvedValue(1 as any);
+    jest.spyOn(service, 'resolveResourceByName').mockResolvedValue({ id: 3003 } as any);
+    const handler = new AutotaskToolHandler(service, mockLogger);
+
+    await handler.callTool('autotask_create_time_entry', {
+      ticketID: 4004,
+      resourceName: 'Will Spence',
+      dateWorked: '2026-03-15',
+      hoursWorked: 1.5,
+      summaryNotes: 'work'
+    });
+
+    const payload = spy.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload.resourceID).toBe(3003);
+    expect('resourceName' in payload).toBe(false);
+  });
+
+  test('never sends category on a ticket-bound entry', async () => {
+    // The leaking shape: a ticket makes this not Regular Time, so the branch
+    // holding the delete is skipped entirely.
+    const service = new AutotaskService(mockConfig, mockLogger);
+    const spy = jest.spyOn(service, 'createTimeEntry').mockResolvedValue(1 as any);
+    const handler = new AutotaskToolHandler(service, mockLogger);
+
+    await handler.callTool('autotask_create_time_entry', {
+      ...baseArgs, category: 'Internal Meeting'
+    });
+
+    const payload = spy.mock.calls[0][0] as Record<string, unknown>;
+    expect('category' in payload).toBe(false);
+    expect(payload.ticketID).toBe(4004);
+  });
+
+  test('Regular Time still resolves category into internalBillingCodeID', async () => {
+    const service = new AutotaskService(mockConfig, mockLogger);
+    const spy = jest.spyOn(service, 'createTimeEntry').mockResolvedValue(1 as any);
+    jest.spyOn(service, 'resolveInternalBillingCodeByName').mockResolvedValue({ id: 77 } as any);
+    const handler = new AutotaskToolHandler(service, mockLogger);
+
+    await handler.callTool('autotask_create_time_entry', {
+      resourceID: 2002,
+      category: 'Internal Meeting',
+      dateWorked: '2026-03-15',
+      hoursWorked: 1.5,
+      summaryNotes: 'meeting'
+    });
+
+    const payload = spy.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload.internalBillingCodeID).toBe(77);
+    expect('category' in payload).toBe(false);
+  });
+
   test('never sends projectID, even when one is passed anyway', async () => {
     const service = new AutotaskService(mockConfig, mockLogger);
     const spy = jest.spyOn(service, 'createTimeEntry').mockResolvedValue(1 as any);

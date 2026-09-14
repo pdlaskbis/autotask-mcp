@@ -878,7 +878,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         },
         category: {
           type: 'string',
-          description: 'Category name for Regular Time entries (e.g., "Internal Meeting", "Office Management", "Training", "Research", "HR/Recruiting", "Travel Time", "Holiday", "PTO"). Required for Regular Time entries (when no ticket/task/project is specified).'
+          description: 'Category name for Regular Time entries (e.g., "Internal Meeting", "Office Management", "Training", "Research", "HR/Recruiting", "Travel Time", "Holiday", "PTO"). Required for Regular Time entries (when no ticket and no task is specified).'
         },
         dateWorked: {
           type: 'string',
