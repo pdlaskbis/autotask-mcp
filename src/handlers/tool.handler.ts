@@ -22,7 +22,12 @@ function resolveEnhanceConcurrency(raw: string | undefined): number {
 }
 
 // Fields accepted by autotask_create_ticket / autotask_update_ticket.
-// Keep this list in sync with the tool definitions in tool.definitions.ts.
+// This list must cover every property declared by those two tools in
+// tool.definitions.ts: buildTicketPayload drops anything not listed here, so a
+// field that is declared but missing from this list is accepted from the caller
+// and then silently discarded. The drift is enforced by the
+// 'every declared ticket field is writable' test in tests/ticket-payload.test.ts
+// rather than left to this comment.
 const TICKET_WRITABLE_FIELDS = [
   'companyID',
   'title',
@@ -30,7 +35,11 @@ const TICKET_WRITABLE_FIELDS = [
   'status',
   'priority',
   'assignedResourceID',
+  // Autotask rejects the whole POST/PATCH with a data violation when
+  // assignedResourceID is sent without its role, so this must be forwarded.
+  'assignedResourceRoleID',
   'contactID',
+  'dueDateTime',
   'queueID',
   'ticketCategory',
   'ticketType',
