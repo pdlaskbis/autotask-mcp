@@ -856,7 +856,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   // Time entry tools
   {
     name: 'autotask_create_time_entry',
-    description: 'Create a time entry in Autotask. Can be tied to a ticket, task, or project, OR created as "Regular Time" (no parent) for meetings, admin work, etc. For Regular Time, specify a category like "Internal Meeting", "Office Management", "Training", etc.',
+    description: 'Create a time entry in Autotask. Can be tied to a ticket or a task, OR created as "Regular Time" (no parent) for meetings, admin work, etc. For Regular Time, specify a category like "Internal Meeting", "Office Management", "Training", etc. Time is not logged against a project directly -- log it against a task within the project.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -866,11 +866,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         },
         taskID: {
           type: 'number',
-          description: 'Task ID for the time entry (for project work, omit for Regular Time)'
-        },
-        projectID: {
-          type: 'number',
-          description: 'Project ID for the time entry (omit for Regular Time)'
+          description: 'Task ID for the time entry. This is how project work is logged: the task belongs to the project. Omit for Regular Time.'
         },
         resourceID: {
           type: 'number',
@@ -1544,10 +1540,6 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         name: {
           type: 'string',
           description: 'Expense report name'
-        },
-        description: {
-          type: 'string',
-          description: 'Expense report description'
         },
         submitterId: {
           type: 'number',
