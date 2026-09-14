@@ -967,8 +967,18 @@ export class AutotaskToolHandler {
           a.resourceID = resource.id;
           delete a.resourceName;
         }
-        // For Regular Time entries (no ticket/task/project), handle category
-        const isRegularTime = !a.ticketID && !a.taskID && !a.projectID;
+        // TimeEntries has no projectID field -- Autotask answers a query on it
+        // with "Unable to find projectID in the TimeEntry Entity". Project work
+        // is logged against a TASK, which belongs to the project. The parameter
+        // is gone from the schema; this drops it defensively because
+        // autotask_execute_tool forwards arbitrary args, and an unknown field is
+        // ignored on write rather than rejected -- so leaving it would create an
+        // unparented entry while looking like it worked. It also used to
+        // suppress the Regular Time branch below, producing an entry with no
+        // parent AND no billing category.
+        delete a.projectID;
+        // For Regular Time entries (no ticket/task), handle category
+        const isRegularTime = !a.ticketID && !a.taskID;
         if (isRegularTime) {
           if (!a.category && !a.internalBillingCodeID) {
             // List available categories and prompt user
@@ -1003,6 +1013,16 @@ export class AutotaskToolHandler {
           projectData.endDateTime = `${projectData.endDate}T00:00:00Z`;
           delete projectData.endDate;
         }
+        // The Project field is `estimatedTime`; `estimatedHours` does not exist
+        // ("Unable to find estimatedHours in the Project Entity") and was
+        // discarded on write, so an estimate given at creation never landed.
+        // autotask_update_project has always used the correct name -- the two
+        // disagreed and create was the wrong one. The caller-facing parameter
+        // keeps its friendlier name and is mapped here, same as startDate above.
+        if (projectData.estimatedHours !== undefined && projectData.estimatedTime === undefined) {
+          projectData.estimatedTime = projectData.estimatedHours;
+        }
+        delete projectData.estimatedHours;
         const id = await s.createProject(projectData); return { result: id, message: `Successfully created project with ID: ${id}` };
       }],
       ['autotask_update_project', async (a) => {
@@ -1200,7 +1220,11 @@ export class AutotaskToolHandler {
         return { result: r, message: `Found ${r.length} expense reports` };
       }],
       ['autotask_create_expense_report', async (a) => {
-        const id = await s.createExpenseReport({ name: a.name, description: a.description, submitterID: a.submitterId, weekEnding: a.weekEndingDate || a.weekEnding });
+        // No `description`: ExpenseReports has no such field. Autotask answers a
+        // query on it with "Unable to find description in the ExpenseReport
+        // Entity" and ignores it on write, so sending it silently discarded
+        // whatever the caller wrote. It is gone from the schema too.
+        const id = await s.createExpenseReport({ name: a.name, submitterID: a.submitterId, weekEnding: a.weekEndingDate || a.weekEnding });
         return { result: id, message: `Successfully created expense report with ID: ${id}` };
       }],
 
