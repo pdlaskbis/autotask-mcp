@@ -958,15 +958,22 @@ export class AutotaskToolHandler {
         if (!a.resourceID && !a.resourceName) {
           return { result: null, message: 'Please specify who is logging this time. Provide a resourceName (e.g., "Will Spence") or resourceID.' };
         }
-        // Resolve resourceName to resourceID via SDK helper
+        // Resolve resourceName to resourceID via SDK helper. An explicit
+        // resourceID wins, so the lookup is skipped when one is given.
         if (a.resourceName && !a.resourceID) {
           const resource = await s.resolveResourceByName(a.resourceName);
           if (!resource) {
             throw new Error(`No resource found matching "${a.resourceName}"`);
           }
           a.resourceID = resource.id;
-          delete a.resourceName;
         }
+        // resourceName is a convenience input, not a TimeEntry field. The delete
+        // used to sit inside the branch above, so it only ran when the name had
+        // to be resolved: pass BOTH a name and an ID and the name shipped to
+        // Autotask, which ignores unknown fields on write rather than rejecting
+        // them. Unconditional, because the field must never leave here either
+        // way and a guard narrower than the field is what caused this.
+        delete a.resourceName;
         // TimeEntries has no projectID field -- Autotask answers a query on it
         // with "Unable to find projectID in the TimeEntry Entity". Project work
         // is logged against a TASK, which belongs to the project. The parameter
@@ -992,9 +999,14 @@ export class AutotaskToolHandler {
               throw new Error(`No category found matching "${a.category}". Available categories: ${categories.join(', ')}`);
             }
             a.internalBillingCodeID = billingCode.id;
-            delete a.category;
           }
         }
+        // Same shape of bug as resourceName above: `category` is a convenience
+        // input resolved into internalBillingCodeID, not a TimeEntry field, and
+        // its delete was nested two conditions deep. A category passed with a
+        // ticket or task never reached the Regular Time branch, so it was
+        // forwarded verbatim and silently ignored by Autotask.
+        delete a.category;
         const id = await s.createTimeEntry(a); return { result: id, message: `Successfully created time entry with ID: ${id}` };
       }],
 
