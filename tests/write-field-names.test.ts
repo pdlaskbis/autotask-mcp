@@ -58,6 +58,31 @@ describe('autotask_create_time_entry', () => {
     expect(propsOf('autotask_create_time_entry')).not.toHaveProperty('projectID');
   });
 
+  test('no description still offers a project as a parent for time', () => {
+    // Removing the parameter left prose behind: the `category` description
+    // continued to read "when no ticket/task/project is specified", pointing
+    // readers at a parameter that no longer exists. Prose is part of the
+    // interface for an LLM-facing tool -- it is what the model reads to decide
+    // what to pass -- so a stale option in a description is a real defect, not
+    // a typo.
+    //
+    // The word "project" is not the defect; a project offered as a PARAMETER
+    // is. The tool and taskID descriptions mention projects deliberately, to
+    // say that project work is logged against a task. So this matches the shape
+    // the stale text had rather than the word: an earlier version of this test
+    // banned "project" outright and failed on that deliberate taskID prose.
+    const AS_A_PARAMETER = /\/\s*project\b|\bprojectID\b/i;
+    const tool = TOOL_DEFINITIONS.find(t => t.name === 'autotask_create_time_entry')!;
+    const props = propsOf('autotask_create_time_entry') as Record<string, { description?: string }>;
+    const texts: Array<[string, string]> = [
+      ['<tool description>', tool.description],
+      ...Object.entries(props).map(([n, p]) => [n, p.description ?? ''] as [string, string])
+    ];
+    for (const [where, text] of texts) {
+      expect(`${where}: ${text}`).not.toMatch(AS_A_PARAMETER);
+    }
+  });
+
   test('never sends projectID, even when one is passed anyway', async () => {
     const service = new AutotaskService(mockConfig, mockLogger);
     const spy = jest.spyOn(service, 'createTimeEntry').mockResolvedValue(1 as any);
