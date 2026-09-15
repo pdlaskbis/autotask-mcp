@@ -40,6 +40,13 @@
 
 ### Fixed
 
+- **The `periodType` description promised control Autotask does not give.** It read *"Set it for recurring service lines — Autotask treats an unset line as one-time, so a monthly service quoted without it bills once."* Verified live on 2026-09-15, both halves are wrong for the line type they name:
+  - On a **service** line Autotask uses the *service's own* period and silently discards the caller's. Against service 3 (own `periodType` 2): sent `4` → stored `2`; sent `1` → stored `2`. A recurring service is already recurring without the field, and cannot be changed with it.
+  - On a **product** line an incompatible value is rejected outright: `When QuoteItem.quoteItemType is set to Product(1) the QuoteItem.periodType may not be Semi-Annual.`
+  - Behaviour on charge, labor, expense and shipping lines is **untested**, and the description now says so rather than generalising from two line types.
+  - A description is the interface for an LLM-facing tool — it is what the model reads to decide what to pass. The old text would have had a model "fix" a non-problem by setting a field with no effect, then report success. Corrected on both `autotask_create_quote_item` and `autotask_update_quote_item`, and in `create_quote_item`'s tool-level description, which carried the same claim.
+  - 5 tests pin the correction, matching the false claim by shape rather than exact words so a reworded version of it still fails. Verified by mutation: restoring the original text fails 4, fixing only the create tool fails 2, restoring the tool-level claim alone fails 1.
+
 - **`autotask_create_quote_item` was rejected outright whenever the caller left a defaulted field out** — which is every caller who relied on the defaults existing. `createQuoteItem` declares `unitDiscount: 0`, `lineDiscount: 0`, `percentageDiscount: 0` and `isOptional: false`, but the tool handler forwards a fixed list of argument names, so each omitted one arrives as an explicit `undefined`. Spreading that over the defaults replaced them with `undefined`, `JSON.stringify` dropped the keys, and Autotask — which requires all four on `QuoteItems` — refused the create:
   - `HTTP 500 "Missing Required Field: isOptional. ; on record number [1]"`, then the same for `unitDiscount` once `isOptional` was passed by hand, and so on until all four were supplied explicitly. Confirmed against the live API on 2026-09-15.
   - Fixed by stripping `undefined` before the spread rather than `??`-ing each field, so an explicit `false` or `0` from the caller still wins.
