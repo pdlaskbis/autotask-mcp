@@ -47,20 +47,38 @@ const config: McpServerConfig = {
 let fetchSpy: jest.SpiedFunction<typeof fetch>;
 afterEach(() => { if (fetchSpy) fetchSpy.mockRestore(); });
 
-/** Capture the body POSTed to /Contacts. */
-function captureContactPost(): () => any {
-  let body: any;
+interface Call { method: string; url: string; body: any }
+
+function ok(payload: any): Response {
+  return {
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify(payload),
+    json: async () => payload,
+  } as unknown as Response;
+}
+
+/**
+ * Record every request. `existingContact` is what GET /Contacts/{id} returns,
+ * used by updateContact to resolve the parent companyID.
+ */
+function captureCalls(existingContact: any = { id: 555, companyID: 77 }): () => Call[] {
+  const calls: Call[] = [];
   fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = typeof input === 'string' ? input : (input as URL).toString();
-    if (url.endsWith('/Contacts')) body = JSON.parse(init!.body as string);
-    return {
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({ itemId: 321 }),
-      json: async () => ({ itemId: 321 }),
-    } as unknown as Response;
+    const method = (init?.method || 'GET').toUpperCase();
+    const body = init?.body ? JSON.parse(init.body as string) : undefined;
+    calls.push({ method, url, body });
+    if (method === 'GET' && /\/Contacts\/\d+$/.test(url)) return ok({ item: existingContact });
+    return ok({ itemId: 321 });
   });
-  return () => body;
+  return () => calls;
+}
+
+/** The body POSTed when creating a contact, whichever route was used. */
+function captureContactPost(): () => any {
+  const calls = captureCalls();
+  return () => calls().find(c => c.method === 'POST' && c.url.includes('Contacts'))?.body;
 }
 
 describe('createContact defaults isActive', () => {
@@ -135,5 +153,82 @@ describe('autotask_create_contact schema', () => {
   test('the description states the default', () => {
     const tool = TOOL_DEFINITIONS.find(t => t.name === 'autotask_create_contact');
     expect(tool!.description).toMatch(/isActive/i);
+  });
+});
+
+describe('contacts use the Companies child route, which is the only one this zone registers', () => {
+  // Probed against webservices5 on 2026-09-15, each request built so it could
+  // not succeed (empty body, or a nonexistent id):
+  //
+  //   POST  /Contacts                  -> IIS HTML 404          route absent
+  //   POST  /Companies/{id}/Contacts   -> 500 Missing Required Field: isActive
+  //   PATCH /Contacts                  -> IIS HTML 404          route absent
+  //   PUT   /Contacts/{id}             -> 405 no such method
+  //   PATCH /Companies/{id}/Contacts   -> 500 No matching records found
+  //
+  // A 500 means the route resolved and the request was rejected on its merits;
+  // the 404s are IIS saying the route was never registered. So BOTH legs of
+  // http.update() dead-end for Contacts here -- contact updates were not
+  // degraded, they were impossible.
+
+  test('create posts to /Companies/{id}/Contacts, never the bare collection', async () => {
+    const calls = captureCalls();
+    const service = new AutotaskService(config, mockLogger);
+
+    await service.createContact({ companyID: 77, firstName: 'A' } as any);
+
+    const post = calls().find(c => c.method === 'POST')!;
+    expect(post.url).toMatch(/\/Companies\/77\/Contacts$/);
+    expect(post.url).not.toMatch(/\/v1\.0\/Contacts$/);
+  });
+
+  test('create without companyID fails fast instead of 404ing', async () => {
+    captureCalls();
+    const service = new AutotaskService(config, mockLogger);
+
+    await expect(service.createContact({ firstName: 'A' } as any))
+      .rejects.toThrow(/companyID is required/);
+  });
+
+  test('update patches /Companies/{id}/Contacts, never the bare collection or PUT', async () => {
+    const calls = captureCalls();
+    const service = new AutotaskService(config, mockLogger);
+
+    await service.updateContact(555, { firstName: 'Changed' } as any);
+
+    const patch = calls().find(c => c.method === 'PATCH')!;
+    expect(patch.url).toMatch(/\/Companies\/77\/Contacts$/);
+    expect(patch.body).toMatchObject({ id: 555, firstName: 'Changed' });
+    expect(calls().some(c => c.method === 'PUT')).toBe(false);
+    expect(calls().some(c => /\/v1\.0\/Contacts$/.test(c.url))).toBe(false);
+  });
+
+  test('update takes companyID from the payload without a lookup when given', async () => {
+    const calls = captureCalls();
+    const service = new AutotaskService(config, mockLogger);
+
+    await service.updateContact(555, { companyID: 88, firstName: 'X' } as any);
+
+    expect(calls().some(c => c.method === 'GET')).toBe(false);
+    expect(calls().find(c => c.method === 'PATCH')!.url).toMatch(/\/Companies\/88\/Contacts$/);
+  });
+
+  test('update looks the contact up when the payload omits companyID', async () => {
+    const calls = captureCalls({ id: 555, companyID: 99 });
+    const service = new AutotaskService(config, mockLogger);
+
+    await service.updateContact(555, { firstName: 'X' } as any);
+
+    expect(calls().some(c => c.method === 'GET' && /\/Contacts\/555$/.test(c.url))).toBe(true);
+    expect(calls().find(c => c.method === 'PATCH')!.url).toMatch(/\/Companies\/99\/Contacts$/);
+  });
+
+  test('update fails with a clear message when the parent cannot be resolved', async () => {
+    // Better than letting it fall through to a route that answers HTML.
+    captureCalls({ id: 555 });
+    const service = new AutotaskService(config, mockLogger);
+
+    await expect(service.updateContact(555, { firstName: 'X' } as any))
+      .rejects.toThrow(/unable to resolve parent companyID/);
   });
 });

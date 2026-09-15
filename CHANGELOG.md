@@ -34,6 +34,18 @@
 
 ### Fixed
 
+- **Contact create and update used routes this Autotask zone does not register.** Contacts are a child of Companies, and the collection-level routes are absent on `webservices5` — the same failure upstream #133 reports for Zone DE1, so it is not one zone's quirk. Probed directly on 2026-09-15, each request built so it could not succeed:
+
+  | route | result | meaning |
+  |---|---|---|
+  | `POST /Contacts` | IIS HTML 404 | route absent |
+  | `POST /Companies/{id}/Contacts` | 500 `Missing Required Field: isActive.` | **registered** |
+  | `PATCH /Contacts` | IIS HTML 404 | route absent |
+  | `PUT /Contacts/{id}` | 405 `does not support http method 'PUT'` | not supported |
+  | `PATCH /Companies/{id}/Contacts` | 500 `No matching records found…` | **registered** |
+
+  A 500 means the route resolved and the request was rejected on its merits; the 404s are IIS reporting a route that was never registered. **`updateContact` was therefore impossible, not merely degraded** — `http.update()` tries the PATCH, gets a 404, falls back to the PUT, gets a 405, and throws, so every contact update failed. Both calls now use the documented child route, the same pattern `createTask`, `createPhase` and `createTicketCharge` already use. `createContact` requires `companyID` and says so; `updateContact` takes the parent from the caller's payload when supplied and looks it up otherwise, failing with a clear message rather than falling through to a route that answers HTML.
+
 - **`autotask_create_contact` omitted a field Autotask requires, so every create failed.** Autotask declares `isActive` as required on the Contacts entity and answers a create without it `HTTP 500 "Missing Required Field: isActive."` Confirmed from the entity metadata rather than the error alone — `GET /Contacts/entityInformation/fields` reports `isActive` with `isRequired: true, dataType: integer` (checked 2026-09-15). The field was absent from the tool schema too, so a caller could not supply it even knowing to.
   - `createContact()` now defaults it to active, and the schema advertises it as an optional boolean with the default stated in both the property and the tool description.
   - **Normalised to `1`/`0`.** The Autotask field is an *integer*; the schema exposes a *boolean* because that is the honest shape for a caller. Something has to convert, and doing it here beats sending `true` into an integer field and leaving the outcome to server-side coercion.
