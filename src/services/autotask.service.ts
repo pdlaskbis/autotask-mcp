@@ -1717,29 +1717,84 @@ export class AutotaskService {
     }
   }
 
+  /**
+   * Create a fresh QuoteLocation row snapshotting a company's address.
+   *
+   * Two things to know.
+   *
+   * 1. Quotes.billToLocationID / shipToLocationID / soldToLocationID reference
+   *    the **QuoteLocations** entity, NOT CompanyLocations. The two have
+   *    independent id sequences that overlap, so feeding a CompanyLocation id
+   *    into a quote is either rejected:
+   *
+   *      HTTP 500 "Reference value on field: billToLocationID of type:
+   *      QuoteLocation does not exist or is invalid."
+   *
+   *    ...or silently accepted as a different address belonging to another
+   *    company. First observed 2026-07-08 and still true on re-check
+   *    2026-09-15:
+   *      CompanyLocations/2 = "PO Box 1134, Fairhope AL"   (companyID 29687686)
+   *      QuoteLocations/2   = "2411 Wolf Ridge Rd, Mobile AL"
+   *    Four-for-four on the ids sampled. Silent cross-client address leak.
+   *
+   * 2. QuoteLocations are per-quote SNAPSHOTS, not shared address records.
+   *    Autotask's own UI creates three fresh rows for every quote (bill/ship/
+   *    sold) -- visible in the id sequence, which steps by exactly 3 per quote.
+   *    That is deliberate: a 2011 quote keeps the address it was written with,
+   *    regardless of what the company record says today.
+   *
+   *    So we do NOT reuse rows. An earlier cut of this fix looked for a
+   *    matching QuoteLocation and reused it; that (a) leaked across clients
+   *    when the company's address was only partially populated, and (b) coupled
+   *    quotes together, so editing one address would silently rewrite the
+   *    address on every quote pointing at that row. Always create.
+   */
+  private async createQuoteLocationForCompany(companyID: number): Promise<number | null> {
+    const http = await this.ensureClient();
+    const company = await this.getCompany(companyID);
+    if (!company) {
+      this.logger.warn(`createQuoteLocationForCompany: company ${companyID} not found`);
+      return null;
+    }
+
+    const c = company as Record<string, any>;
+    const location = {
+      address1: (c.address1 ?? '') as string,
+      address2: (c.address2 ?? '') as string,
+      city: (c.city ?? '') as string,
+      state: (c.state ?? '') as string,
+      postalCode: (c.postalCode ?? '') as string,
+    };
+
+    const id = await http.create('QuoteLocations', location);
+    this.logger.info(`Created QuoteLocation ${id} for company ${companyID}`);
+    return id;
+  }
+
   async createQuote(quote: Partial<AutotaskQuote>): Promise<number> {
     const http = await this.ensureClient();
     try {
-      // Autotask requires location IDs on the quote. Auto-populate from the
-      // company's first location if the caller didn't supply them.
+      // Autotask requires all three location IDs. They reference QuoteLocations,
+      // not CompanyLocations, and each quote gets its own snapshot rows --
+      // see createQuoteLocationForCompany().
       if (
         quote.companyID &&
         (!quote.billToLocationID || !quote.shipToLocationID || !quote.soldToLocationID)
       ) {
         try {
-          const locations = await http.query<{ id: number }>(
-            'CompanyLocations',
-            [{ op: 'eq', field: 'companyID', value: quote.companyID }],
-            { maxRecords: 10 }
-          );
-          if (locations.length > 0) {
-            const defaultLocationId = locations[0].id;
-            if (!quote.billToLocationID) quote.billToLocationID = defaultLocationId;
-            if (!quote.shipToLocationID) quote.shipToLocationID = defaultLocationId;
-            if (!quote.soldToLocationID) quote.soldToLocationID = defaultLocationId;
+          const locationId = await this.createQuoteLocationForCompany(quote.companyID);
+          if (locationId !== null) {
+            if (!quote.billToLocationID) quote.billToLocationID = locationId;
+            if (!quote.shipToLocationID) quote.shipToLocationID = locationId;
+            if (!quote.soldToLocationID) quote.soldToLocationID = locationId;
+          } else {
+            this.logger.warn(
+              `Could not create a QuoteLocation for company ${quote.companyID}; ` +
+              'Autotask will reject the quote unless the caller supplies location IDs explicitly.'
+            );
           }
         } catch (locError) {
-          this.logger.warn('Could not auto-populate location IDs for quote:', locError);
+          this.logger.warn('Could not auto-populate QuoteLocation IDs for quote:', locError);
         }
       }
 
