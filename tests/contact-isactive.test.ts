@@ -232,3 +232,67 @@ describe('contacts use the Companies child route, which is the only one this zon
       .rejects.toThrow(/unable to resolve parent companyID/);
   });
 });
+
+describe('updateContact normalises isActive the same way createContact does', () => {
+  // Found by LIVE verification after the child-route fix shipped, not by these
+  // tests: createContact coerced isActive to an integer and updateContact did
+  // not, so a caller passing the boolean the schema advertises got
+  //
+  //   HTTP 500 Unexpected character encountered while parsing value: f.
+  //            Path 'isActive'
+  //
+  // Autotask does not coerce a boolean into an integer field -- its JSON parser
+  // rejects the payload outright. Both paths now share toIsActiveInt().
+
+  test('false becomes 0 instead of reaching Autotask as a boolean', async () => {
+    const calls = captureCalls();
+    const service = new AutotaskService(config, mockLogger);
+
+    await service.updateContact(555, { isActive: false } as any);
+
+    const patch = calls().find(c => c.method === 'PATCH')!;
+    expect(patch.body.isActive).toBe(0);
+    expect(typeof patch.body.isActive).toBe('number');
+  });
+
+  test('true becomes 1', async () => {
+    const calls = captureCalls();
+    const service = new AutotaskService(config, mockLogger);
+
+    await service.updateContact(555, { isActive: true } as any);
+
+    expect(calls().find(c => c.method === 'PATCH')!.body.isActive).toBe(1);
+  });
+
+  test('an integer is passed through untouched', async () => {
+    const calls = captureCalls();
+    const service = new AutotaskService(config, mockLogger);
+
+    await service.updateContact(555, { isActive: 0 } as any);
+
+    expect(calls().find(c => c.method === 'PATCH')!.body.isActive).toBe(0);
+  });
+
+  test('an update that omits isActive does NOT default it', async () => {
+    // The hazard of reusing createContact's logic verbatim: defaulting here
+    // would silently reactivate every contact somebody had deactivated,
+    // on any unrelated edit.
+    const calls = captureCalls();
+    const service = new AutotaskService(config, mockLogger);
+
+    await service.updateContact(555, { firstName: 'Changed' } as any);
+
+    const patch = calls().find(c => c.method === 'PATCH')!;
+    expect('isActive' in patch.body).toBe(false);
+  });
+
+  test('the caller object is not mutated', async () => {
+    captureCalls();
+    const service = new AutotaskService(config, mockLogger);
+    const input = { isActive: false } as any;
+
+    await service.updateContact(555, input);
+
+    expect(input.isActive).toBe(false);
+  });
+});

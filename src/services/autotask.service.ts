@@ -56,6 +56,29 @@ import { FieldInfo, PicklistValue } from './picklist.cache';
 export const MATCH_ALL: QueryFilter[] = [{ op: 'gte', field: 'id', value: 0 }];
 
 /**
+ * Coerce a caller's `isActive` into the INTEGER Autotask's Contacts entity
+ * declares (`isRequired: true, dataType: integer`).
+ *
+ * The tool schemas expose a BOOLEAN because that is the honest shape for a
+ * caller, so something has to convert -- and it has to be us. Autotask does not
+ * coerce: a raw `false` reaches its JSON parser and is rejected outright with
+ *
+ *   Unexpected character encountered while parsing value: f. Path 'isActive'
+ *
+ * Observed live on 2026-09-15 against updateContact, which lacked this
+ * conversion while createContact had it. One helper, both call sites, so the
+ * two cannot drift apart again.
+ *
+ * Returns undefined when the caller supplied nothing, which the two callers
+ * treat differently on purpose: create applies its default, update leaves the
+ * field alone.
+ */
+export function toIsActiveInt(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  return value ? 1 : 0;
+}
+
+/**
  * Push an `eq` filter only when `value` is not `undefined`. Replaces the
  * `if (options.X !== undefined) filters.push({ op: 'eq', field: 'X', value: options.X })`
  * pattern that was previously duplicated across every search method.
@@ -330,10 +353,7 @@ export class AutotaskService {
       // for a caller, so `true`/`false` have to be converted here rather than
       // relied on to coerce server-side. An explicit false/0 is honoured.
       const payload: Record<string, any> = { ...(contact as Record<string, any>) };
-      payload.isActive =
-        payload.isActive === undefined || payload.isActive === null
-          ? 1
-          : (payload.isActive ? 1 : 0);
+      payload.isActive = toIsActiveInt(payload.isActive) ?? 1;
       const id = await http.childCreate('Companies', companyID, 'Contacts', payload);
       this.logger.info(`Contact created with ID: ${id}`);
       return id;
@@ -372,7 +392,13 @@ export class AutotaskService {
           'Companies/{companyID}/Contacts child route'
         );
       }
-      await http.childUpdate('Companies', companyID, 'Contacts', id, updates as Record<string, any>);
+      // Same integer coercion as createContact. Deliberately does NOT default:
+      // an update that omits isActive must leave it alone, or every contact
+      // edit would silently reactivate a contact somebody deactivated.
+      const payload: Record<string, any> = { ...(updates as Record<string, any>) };
+      const isActive = toIsActiveInt(payload.isActive);
+      if (isActive !== undefined) payload.isActive = isActive;
+      await http.childUpdate('Companies', companyID, 'Contacts', id, payload);
       this.logger.info(`Contact ${id} updated successfully`);
     } catch (error) {
       this.logger.error(`Failed to update contact ${id}:`, error);

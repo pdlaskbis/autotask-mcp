@@ -34,6 +34,10 @@
 
 ### Fixed
 
+- **`autotask_update_contact` rejected the boolean its own schema advertises.** `createContact` coerced `isActive` to the integer Autotask's Contacts entity declares; `updateContact` did not, and passed the caller's boolean straight through. Autotask does not coerce — its JSON parser rejects the payload outright: `Unexpected character encountered while parsing value: f. Path 'isActive'`. So deactivating a contact through the typed tool failed every time. Found by **live verification immediately after the child-route fix deployed**, not by the tests that shipped with it: every test asserted on the outgoing payload, and the payload was only wrong in a way the real parser objected to. Both paths now share one `toIsActiveInt()` helper so they cannot drift apart again — which is the same defect shape as the patch stack itself, two copies of one rule kept in sync by hand.
+  - `updateContact` deliberately does **not** default the field. Reusing create's logic verbatim would silently reactivate any contact somebody had deactivated, on any unrelated edit; a test pins that.
+  - 5 tests. Verified by mutation: dropping the coercion fails 2, adding create's default fails 1.
+
 - **Contact create and update used routes this Autotask zone does not register.** Contacts are a child of Companies, and the collection-level routes are absent on `webservices5` — the same failure upstream #133 reports for Zone DE1, so it is not one zone's quirk. Probed directly on 2026-09-15, each request built so it could not succeed:
 
   | route | result | meaning |
