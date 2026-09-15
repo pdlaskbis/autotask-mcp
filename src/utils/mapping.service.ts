@@ -21,6 +21,50 @@ export interface MappingResult {
   found: boolean;
 }
 
+/**
+ * How long a caller will wait for a cold cache warm before giving up on it.
+ *
+ * The warm is a full-tenant walk: every company (paginated) plus every
+ * resource. On a large tenant that can exceed a minute, and it ran INLINE in
+ * whichever request happened to touch it first -- so the first ticket search
+ * after startup, and the first one after each 30-minute expiry, blew the MCP
+ * client's 60s timeout and returned nothing. The user saw a broken search;
+ * the actual query underneath had completed in milliseconds.
+ *
+ * A deadline rather than a redesign: the warm still runs, still populates the
+ * cache for everyone after it, and callers stop waiting on it past this point
+ * and fall through to the per-ID direct-get paths. Slightly worse names on one
+ * early request beats a dead one.
+ */
+const DEFAULT_WARM_TIMEOUT_MS = 10_000;
+
+function resolveWarmTimeout(raw: string | undefined): number {
+  const parsed = parseInt(raw ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_WARM_TIMEOUT_MS;
+}
+
+/**
+ * Resolve when `work` settles or when `ms` elapses, whichever comes first.
+ *
+ * The loser is not cancelled -- `work` keeps running and still populates the
+ * cache. This only bounds how long a CALLER waits for it.
+ */
+async function withDeadline(work: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      work,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ms);
+        // Don't hold the process open just for the deadline.
+        (timer as any).unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export class MappingService {
   // Per-instance init promise (coalesces concurrent initializeCache calls
   // on the SAME instance). Must NOT be static — a class-level singleton
@@ -37,6 +81,8 @@ export class MappingService {
   private cacheExpiryMs: number;
   // When true, skip the eager pre-warm and rely on per-ID direct-get fallbacks.
   private lazyLoading: boolean;
+  // Upper bound on how long any single caller blocks on a cache warm.
+  private warmTimeoutMs: number;
 
   public constructor(
     autotaskService: AutotaskService,
@@ -48,6 +94,7 @@ export class MappingService {
     this.logger = logger;
     this.cacheExpiryMs = cacheExpiryMs;
     this.lazyLoading = lazyLoading;
+    this.warmTimeoutMs = resolveWarmTimeout(process.env.MAPPING_CACHE_WARM_TIMEOUT_MS);
     this.cache = {
       companies: new Map<number, string>(),
       resources: new Map<number, string>(),
@@ -117,13 +164,21 @@ export class MappingService {
     }
 
     this.logger.info('Initializing mapping cache...');
-    await Promise.all([
-      this.refreshCompanyCache(),
-      this.refreshResourceCache()
-    ]);
-    this.cache.lastUpdated.companies = new Date();
-    this.cache.lastUpdated.resources = new Date();
-    this.logger.info('Mapping cache initialized successfully', {
+    // Bounded: a slow tenant must not hold the first request open past the
+    // client's timeout. Whatever has not finished keeps loading in the
+    // background and is there for the next caller.
+    await withDeadline(
+      Promise.all([
+        this.refreshCompanyCache(),
+        this.refreshResourceCache()
+      ]),
+      this.warmTimeoutMs
+    );
+    // The refresh methods stamp lastUpdated themselves, each only for the half
+    // it actually loaded. Stamping both here marked an EMPTY cache as fresh
+    // whenever a load failed or timed out, which suppressed any retry for the
+    // full 30-minute expiry window and quietly disabled name resolution.
+    this.logger.info('Mapping cache initialization returned', {
       companies: this.cache.companies.size,
       resources: this.cache.resources.size
     });
@@ -149,10 +204,33 @@ export class MappingService {
    */
   private async refreshCacheIfNeeded(): Promise<void> {
     if (this.lazyLoading) return;
+
+    const companiesStale = !this.isCacheValid('companies');
+    const resourcesStale = !this.isCacheValid('resources');
+    if (!companiesStale && !resourcesStale) return;
+
     const promises: Promise<void>[] = [];
-    if (!this.isCacheValid('companies')) promises.push(this.refreshCompanyCache());
-    if (!this.isCacheValid('resources')) promises.push(this.refreshResourceCache());
-    if (promises.length > 0) await Promise.all(promises);
+    if (companiesStale) promises.push(this.refreshCompanyCache());
+    if (resourcesStale) promises.push(this.refreshResourceCache());
+    if (promises.length === 0) return;
+
+    // Stale-while-revalidate. Once there is anything cached, an expiry must
+    // never be paid for by whoever happens to arrive first: serve the slightly
+    // stale names now and let the refresh land for the next caller. Expiry is
+    // 30 minutes, so this was reliably the first search after any half-hour
+    // lull -- the symptom read as an intermittent timeout with no pattern.
+    // refreshCompanyCache/refreshResourceCache coalesce concurrent callers and
+    // swallow their own errors, so firing and forgetting is safe here.
+    const haveSomethingToServe =
+      this.cache.companies.size > 0 || this.cache.resources.size > 0;
+    if (haveSomethingToServe) {
+      void Promise.all(promises).catch(() => { /* refreshers log their own */ });
+      return;
+    }
+
+    // Nothing cached at all: there is no stale answer to serve, so wait --
+    // but never longer than the warm deadline.
+    await withDeadline(Promise.all(promises), this.warmTimeoutMs);
   }
 
   /**
@@ -203,8 +281,14 @@ export class MappingService {
         return cachedName;
       }
       
-      // Check if we have any resources in cache - if not, the endpoint likely isn't available
-      if (this.cache.resources.size === 0) {
+      // An empty resource cache means "this instance has no Resources endpoint"
+      // ONLY once a load has actually completed -- refreshResourceCache stamps
+      // lastUpdated on every path, success or handled failure. Before that the
+      // cache is empty merely because the warm is still in flight (or was cut
+      // short by the deadline), and short-circuiting there would drop every
+      // resource name on exactly the early requests this bound exists to keep
+      // usable. Fall through to the direct lookup instead.
+      if (this.cache.resources.size === 0 && this.cache.lastUpdated.resources !== null) {
         this.logger.debug(`Resource ${resourceId} not found - Resources endpoint not available in this Autotask instance`);
         return null; // Gracefully return null instead of attempting individual lookup
       }

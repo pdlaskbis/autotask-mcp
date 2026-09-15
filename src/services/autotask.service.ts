@@ -351,11 +351,17 @@ export class AutotaskService {
       if (options.status !== undefined) {
         filters.push({ op: 'eq', field: 'status', value: options.status });
       } else {
-        filters.push({ op: 'ne', field: 'status', value: 5 }); // 5 = Complete
+        // 'ne' is not an Autotask operator; it was discarded, so the documented
+        // "omit status for all open tickets" default in fact returned COMPLETED
+        // tickets too. The operator is 'noteq'.
+        filters.push({ op: 'noteq', field: 'status', value: 5 }); // 5 = Complete
       }
 
       if (options.unassigned === true) {
-        filters.push({ op: 'eq', field: 'assignedResourceID', value: null });
+        // `{op:'eq', value:null}` matches nothing in Autotask, so `unassigned: true`
+        // returned zero rows every time -- the one search that exists to surface
+        // tickets nobody owns.
+        filters.push({ op: 'notExist', field: 'assignedResourceID' });
       } else if (options.assignedResourceID !== undefined) {
         filters.push({ op: 'eq', field: 'assignedResourceID', value: options.assignedResourceID });
       }
@@ -602,12 +608,6 @@ export class AutotaskService {
       // Task-scoped
       if (timeEntry.taskID) {
         const id = await http.childCreate('Tasks', timeEntry.taskID, 'TimeEntries', timeEntry);
-        this.logger.info(`Time entry created with ID: ${id}`);
-        return id;
-      }
-      // Project-scoped
-      if (timeEntry.projectID) {
-        const id = await http.childCreate('Projects', timeEntry.projectID, 'TimeEntries', timeEntry);
         this.logger.info(`Time entry created with ID: ${id}`);
         return id;
       }
@@ -2152,9 +2152,6 @@ export class AutotaskService {
       if ((options as any).ticketId !== undefined) {
         filters.push({ op: 'eq', field: 'ticketID', value: (options as any).ticketId });
       }
-      if ((options as any).projectId !== undefined) {
-        filters.push({ op: 'eq', field: 'projectID', value: (options as any).projectId });
-      }
       if ((options as any).taskId !== undefined) {
         filters.push({ op: 'eq', field: 'taskID', value: (options as any).taskId });
       }
@@ -2167,9 +2164,9 @@ export class AutotaskService {
 
       const approvalStatus = (options as any).approvalStatus;
       if (approvalStatus === 'unapproved') {
-        filters.push({ op: 'eq', field: 'billingApprovalDateTime', value: null });
+        filters.push({ op: 'notExist', field: 'billingApprovalDateTime' });
       } else if (approvalStatus === 'approved') {
-        filters.push({ op: 'isnotnull', field: 'billingApprovalDateTime' });
+        filters.push({ op: 'exist', field: 'billingApprovalDateTime' });
       }
 
       if ((options as any).billable !== undefined) {

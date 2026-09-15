@@ -9,11 +9,82 @@
 import { resolveAutotaskApiUrl } from '../utils/config';
 import { Logger } from '../utils/logger';
 
+// Filter operators Autotask's REST API actually recognizes.
+//
+// This list is a correctness boundary, not documentation. Autotask SILENTLY
+// DISCARDS a filter whose operator it does not recognize -- it does not reject
+// the query. A dropped condition never errors; it just widens the result set,
+// or empties it when nothing valid is left. Confirmed against the live API:
+// `{op:'ne', field:'status', value:5}` returned a ticket whose status WAS 5,
+// while `noteq` correctly excluded it.
+//
+// Spellings are the ones the live API honours, verified individually --
+// `beginsWith` works and `beginsw` is discarded, so this is not merely a
+// transcription of the docs.
+export const QUERY_OPERATORS = [
+  'eq',
+  'noteq',
+  'gt',
+  'gte',
+  'lt',
+  'lte',
+  'beginsWith',
+  'endsWith',
+  'contains',
+  // Null checks. Autotask has no `isnull`/`isnotnull`, and `{op:'eq', value:null}`
+  // matches NOTHING rather than matching null-valued rows -- both were in use
+  // here and both silently returned zero rows forever.
+  'exist',
+  'notExist',
+  'in',
+  'notIn',
+  // Grouping nodes; their children live in `items`.
+  'and',
+  'or',
+] as const;
+
+export type QueryOperator = (typeof QUERY_OPERATORS)[number];
+
+const VALID_OPERATORS: ReadonlySet<string> = new Set(QUERY_OPERATORS);
+
 export interface QueryFilter {
-  op: string;
+  op: QueryOperator;
   field?: string;
   value?: any;
   items?: QueryFilter[];
+}
+
+/**
+ * Fail loudly on a filter Autotask would quietly ignore.
+ *
+ * The type union catches this at compile time for literals, but filters are
+ * assembled dynamically and `autotask_execute_tool` forwards arbitrary args,
+ * so the runtime guard is the one that actually holds. Throwing is the whole
+ * point: a wrong operator that reaches Autotask produces a plausible-looking
+ * result set with no error anywhere, which is strictly worse than a failed
+ * call.
+ */
+export function assertValidFilters(filters: QueryFilter[], path = 'filter'): void {
+  filters.forEach((f, i) => {
+    const at = `${path}[${i}]`;
+    if (!VALID_OPERATORS.has(f.op)) {
+      throw new Error(
+        `Invalid Autotask filter operator "${f.op}" at ${at}. Autotask discards ` +
+        `unrecognized operators instead of rejecting them, so this filter would ` +
+        `have been dropped silently. Valid operators: ${QUERY_OPERATORS.join(', ')}.`
+      );
+    }
+    if (f.value === null && (f.op === 'eq' || f.op === 'noteq')) {
+      throw new Error(
+        `Filter at ${at} compares ${f.field ?? 'a field'} to null with "${f.op}". ` +
+        `Autotask matches no rows for that; use "notExist" to find null values ` +
+        `and "exist" to find non-null values.`
+      );
+    }
+    if (f.items) {
+      assertValidFilters(f.items, `${at}.items`);
+    }
+  });
 }
 
 export interface QueryOptions {
@@ -287,6 +358,7 @@ export class AutotaskHttpClient {
     filter: QueryFilter[],
     opts: QueryOptions = {}
   ): Promise<T[]> {
+    assertValidFilters(filter);
     const totalCap = opts.maxRecords ?? AUTOTASK_MAX_PAGE_SIZE;
     const pageSize = Math.min(totalCap, AUTOTASK_MAX_PAGE_SIZE);
     const body: Record<string, any> = {
