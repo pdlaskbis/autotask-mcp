@@ -40,6 +40,24 @@
 
 ### Fixed
 
+- **`autotask_create_quote_item` was rejected outright whenever the caller left a defaulted field out** — which is every caller who relied on the defaults existing. `createQuoteItem` declares `unitDiscount: 0`, `lineDiscount: 0`, `percentageDiscount: 0` and `isOptional: false`, but the tool handler forwards a fixed list of argument names, so each omitted one arrives as an explicit `undefined`. Spreading that over the defaults replaced them with `undefined`, `JSON.stringify` dropped the keys, and Autotask — which requires all four on `QuoteItems` — refused the create:
+  - `HTTP 500 "Missing Required Field: isOptional. ; on record number [1]"`, then the same for `unitDiscount` once `isOptional` was passed by hand, and so on until all four were supplied explicitly. Confirmed against the live API on 2026-09-15.
+  - Fixed by stripping `undefined` before the spread rather than `??`-ing each field, so an explicit `false` or `0` from the caller still wins.
+
+- **`autotask_update_quote_item` was impossible, not merely degraded.** Both legs of `http.update()` dead-end for `QuoteItems` on this zone, exactly as they did for Contacts:
+
+  | route | result |
+  |---|---|
+  | `PATCH /QuoteItems` | 404 — collection route absent |
+  | `PUT /QuoteItems/{id}` | 405 — "does not support http method 'PUT'" |
+  | `PATCH /Quotes/{id}/Items` | 200, `itemId` returned |
+
+  `update()` tries the PATCH, gets a 404, falls back to the PUT, gets a 405, and throws. QuoteItems are a child of Quotes and `createQuoteItem` already posted to the child route; only the update was left behind. Now resolves the parent `quoteID` (from the payload when supplied, otherwise by reading the item) and uses `childUpdate`, mirroring `updateContact`. An unresolvable parent throws rather than guessing.
+
+  Both defects were found by verifying the previous release's `periodType` work against the live API — neither was caught by its 15 tests, because a mock accepts any JSON and any route. Same lesson as the `isActive`-on-update gap.
+
+- **13 tests** (`tests/quote-item-write-paths.test.ts`) assert on the outgoing request: which route is called, and which keys survive into the body. Verified by mutation: restoring the `undefined`-spreading create fails 1, restoring `http.update()` fails 4, and a fix that strips every falsy value fails 1. That last mutation is why the suite pins `isTaxable: false` specifically — for the four defaulted fields an explicit `false`/`0` is indistinguishable from the default they supply, so only a field with no default can catch it.
+
 - **`autotask_update_contact` rejected the boolean its own schema advertises.** `createContact` coerced `isActive` to the integer Autotask's Contacts entity declares; `updateContact` did not, and passed the caller's boolean straight through. Autotask does not coerce — its JSON parser rejects the payload outright: `Unexpected character encountered while parsing value: f. Path 'isActive'`. So deactivating a contact through the typed tool failed every time. Found by **live verification immediately after the child-route fix deployed**, not by the tests that shipped with it: every test asserted on the outgoing payload, and the payload was only wrong in a way the real parser objected to. Both paths now share one `toIsActiveInt()` helper so they cannot drift apart again — which is the same defect shape as the patch stack itself, two copies of one rule kept in sync by hand.
   - `updateContact` deliberately does **not** default the field. Reusing create's logic verbatim would silently reactivate any contact somebody had deactivated, on any unrelated edit; a test pins that.
   - 5 tests. Verified by mutation: dropping the coercion fails 2, adding create's default fails 1.

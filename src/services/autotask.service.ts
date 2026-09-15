@@ -2135,12 +2135,34 @@ export class AutotaskService {
         throw new Error('quoteID is required to create a quote item');
       }
 
+      // Strip undefined BEFORE the spread, or the defaults below are dead.
+      //
+      // The tool handler forwards a fixed list of argument names, so every
+      // optional one arrives as an explicit `undefined` when the caller omits
+      // it. Spreading that over the defaults replaced `isOptional: false` with
+      // `undefined`, JSON.stringify dropped the key, and Autotask rejected the
+      // create outright -- these four are required on QuoteItems:
+      //
+      //   HTTP 500 "Missing Required Field: isOptional. ; on record number [1]"
+      //   HTTP 500 "Missing Required Field: unitDiscount. ; on record number [1]"
+      //
+      // Confirmed against the live API on 2026-09-15: a create omitting them
+      // failed, and failed again naming the next field, until all four were
+      // passed by hand. So the defaults never applied to anyone who relied on
+      // them, which is the whole point of having them.
+      //
+      // Filtering rather than `??`-ing each field keeps an explicit `false` or
+      // `0` from the caller, which is not undefined and must not be defaulted
+      // away.
+      const supplied = Object.fromEntries(
+        Object.entries(item).filter(([, v]) => v !== undefined)
+      );
       const quoteItem = {
         unitDiscount: 0,
         lineDiscount: 0,
         percentageDiscount: 0,
         isOptional: false,
-        ...item,
+        ...supplied,
         quoteItemType: item.quoteItemType || quoteItemType,
       };
       this.logger.debug('Creating quote item:', quoteItem);
@@ -2158,7 +2180,36 @@ export class AutotaskService {
     const http = await this.ensureClient();
     try {
       this.logger.debug(`Updating quote item ${id}:`, item);
-      await http.update('QuoteItems', id, item as Record<string, any>);
+      // BOTH legs of http.update() dead-end for QuoteItems on this zone, the
+      // same way they do for Contacts. Probed against webservices5 on
+      // 2026-09-15:
+      //
+      //   PATCH /QuoteItems           -> 404 (collection route absent)
+      //   PUT   /QuoteItems/{id}      -> 405 "does not support http method 'PUT'"
+      //   PATCH /Quotes/{id}/Items    -> 200, itemId returned
+      //
+      // update() tries the PATCH, gets a 404, falls back to the PUT, gets a
+      // 405, and throws -- so autotask_update_quote_item was IMPOSSIBLE, not
+      // merely degraded. QuoteItems are a child of Quotes and createQuoteItem
+      // already posts to the child route; only the update was left behind.
+      //
+      // Resolve the parent quoteID from the caller's payload when supplied,
+      // otherwise from the existing record.
+      let quoteID = (item as Record<string, any>).quoteID as number | undefined;
+      if (quoteID === undefined || quoteID === null) {
+        const existing = await this.getQuoteItem(id);
+        quoteID = (existing as Record<string, any> | null)?.quoteID;
+      }
+      if (quoteID === undefined || quoteID === null) {
+        throw new Error(
+          `Cannot update quote item ${id}: unable to resolve parent quoteID for the ` +
+          'Quotes/{quoteID}/Items child route'
+        );
+      }
+      const payload = Object.fromEntries(
+        Object.entries(item as Record<string, any>).filter(([, v]) => v !== undefined)
+      );
+      await http.childUpdate('Quotes', quoteID, 'Items', id, payload);
       this.logger.info(`Quote item ${id} updated`);
     } catch (error) {
       this.logger.error(`Failed to update quote item ${id}:`, error);
