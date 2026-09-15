@@ -299,7 +299,42 @@ export class AutotaskService {
     const http = await this.ensureClient();
     try {
       this.logger.debug('Creating contact:', contact);
-      const id = await http.create('Contacts', contact);
+      // Contacts are a CHILD of Companies, and the collection-level
+      // POST /Contacts route is not registered on every Autotask zone host --
+      // it answers with an IIS "File or directory not found" HTML 404, the
+      // create-side twin of the updateContact dead-end below. Probed directly
+      // against webservices5 on 2026-09-15:
+      //
+      //   POST /Contacts                      -> HTML 404 (route absent)
+      //   POST /Companies/{id}/Contacts       -> 500 "Missing Required Field: isActive."
+      //
+      // The 500 is the good answer: a validation rejection means the route
+      // resolved. The documented child route works on all zones and is the
+      // same pattern createTask, createPhase and createTicketCharge already
+      // use in this file.
+      const companyID = (contact as Record<string, any>).companyID as number | undefined;
+      if (companyID === undefined || companyID === null) {
+        throw new Error(
+          'companyID is required to create a contact (POST /Companies/{companyID}/Contacts child route)'
+        );
+      }
+      // Autotask rejects a contact create that omits isActive:
+      //   HTTP 500 "Missing Required Field: isActive."
+      // Confirmed from the entity metadata rather than the error alone --
+      // GET /Contacts/entityInformation/fields reports isActive as
+      // isRequired: true, dataType: integer. Callers rarely think to send it,
+      // so default it to active.
+      //
+      // Normalised to 1/0 because the field is an INTEGER, not a boolean. The
+      // tool schema exposes it as a boolean because that is the honest shape
+      // for a caller, so `true`/`false` have to be converted here rather than
+      // relied on to coerce server-side. An explicit false/0 is honoured.
+      const payload: Record<string, any> = { ...(contact as Record<string, any>) };
+      payload.isActive =
+        payload.isActive === undefined || payload.isActive === null
+          ? 1
+          : (payload.isActive ? 1 : 0);
+      const id = await http.childCreate('Companies', companyID, 'Contacts', payload);
       this.logger.info(`Contact created with ID: ${id}`);
       return id;
     } catch (error) {
@@ -312,7 +347,32 @@ export class AutotaskService {
     const http = await this.ensureClient();
     try {
       this.logger.debug(`Updating contact ${id}:`, updates);
-      await http.update('Contacts', id, updates as Record<string, any>);
+      // BOTH legs of http.update() dead-end for Contacts on this zone family,
+      // so contact updates were impossible rather than merely degraded.
+      // Probed against webservices5 on 2026-09-15:
+      //
+      //   PATCH /Contacts                -> HTML 404 (collection route absent)
+      //   PUT   /Contacts/{id}           -> 405 "does not support http method 'PUT'"
+      //   PATCH /Companies/{id}/Contacts -> 500 "No matching records found..."
+      //
+      // update() tries the PATCH, gets a 404, falls back to the PUT, gets a
+      // 405, and throws. The child route resolves -- that 500 is a
+      // business-logic answer about the id, not a missing route.
+      //
+      // Resolve the parent companyID from the caller's payload when supplied,
+      // otherwise from the existing record.
+      let companyID = (updates as Record<string, any>).companyID as number | undefined;
+      if (companyID === undefined || companyID === null) {
+        const existing = await this.getContact(id);
+        companyID = (existing as Record<string, any> | null)?.companyID;
+      }
+      if (companyID === undefined || companyID === null) {
+        throw new Error(
+          `Cannot update contact ${id}: unable to resolve parent companyID for the ` +
+          'Companies/{companyID}/Contacts child route'
+        );
+      }
+      await http.childUpdate('Companies', companyID, 'Contacts', id, updates as Record<string, any>);
       this.logger.info(`Contact ${id} updated successfully`);
     } catch (error) {
       this.logger.error(`Failed to update contact ${id}:`, error);

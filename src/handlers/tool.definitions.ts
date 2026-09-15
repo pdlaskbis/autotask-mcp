@@ -303,13 +303,17 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   },
   {
     name: 'autotask_create_contact',
-    description: 'Create new contact record',
+    description: 'Create new contact record. Defaults isActive to true.',
     inputSchema: {
       type: 'object',
       properties: {
         companyID: {
           type: 'number',
           description: 'Company ID for the contact'
+        },
+        isActive: {
+          type: 'boolean',
+          description: 'Whether the contact is active. Required by Autotask; defaults to true when omitted.'
         },
         firstName: {
           type: 'string',
