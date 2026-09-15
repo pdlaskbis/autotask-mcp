@@ -1942,7 +1942,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   },
   {
     name: 'autotask_create_quote_item',
-    description: 'Create a line item on a quote. Set exactly ONE item reference (serviceID, productID, or serviceBundleID). Required: quoteId, quantity. Set periodType for recurring service lines (2=Monthly) or the line bills as one-time. Defaults: unitDiscount=0, lineDiscount=0, percentageDiscount=0, isOptional=false.',
+    description: 'Create a line item on a quote. Set exactly ONE item reference (serviceID, productID, or serviceBundleID). Required: quoteId, quantity. periodType is usually decided by the service or product, not by you — see its description before relying on it. Defaults: unitDiscount=0, lineDiscount=0, percentageDiscount=0, isOptional=false.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1952,7 +1952,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         },
         periodType: {
           type: 'number',
-          description: 'Billing period for the line: 1=One-Time, 2=Monthly, 3=Quarterly, 4=Semi-Annual, 5=Yearly. Set it for recurring service lines — Autotask treats an unset line as one-time, so a monthly service quoted without it bills once.'
+          description: 'Billing period: 1=One-Time, 2=Monthly, 3=Quarterly, 4=Semi-Annual, 5=Yearly. NOT caller-controlled on every line type, so do not rely on it to make a line recurring. On a SERVICE line Autotask uses the SERVICE\'s own period and silently discards what you send (verified live 2026-09-15: sent 4, then sent 1, both stored as 2 — the service\'s value); a recurring service is therefore already recurring without this field, and cannot be changed with it. On a PRODUCT line an incompatible value is rejected outright ("When QuoteItem.quoteItemType is set to Product(1) the QuoteItem.periodType may not be Semi-Annual"). Behaviour on charge, labor, expense and shipping lines is untested. Read the line back if the period matters.'
         },
         isTaxable: {
           type: 'boolean',
@@ -2030,7 +2030,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         },
         periodType: {
           type: 'number',
-          description: 'Billing period for the line: 1=One-Time, 2=Monthly, 3=Quarterly, 4=Semi-Annual, 5=Yearly. Set it for recurring service lines — Autotask treats an unset line as one-time, so a monthly service quoted without it bills once.'
+          description: 'Billing period: 1=One-Time, 2=Monthly, 3=Quarterly, 4=Semi-Annual, 5=Yearly. NOT caller-controlled on every line type, so do not rely on it to make a line recurring. On a SERVICE line Autotask uses the SERVICE\'s own period and silently discards what you send (verified live 2026-09-15: sent 4, then sent 1, both stored as 2 — the service\'s value); a recurring service is therefore already recurring without this field, and cannot be changed with it. On a PRODUCT line an incompatible value is rejected outright ("When QuoteItem.quoteItemType is set to Product(1) the QuoteItem.periodType may not be Semi-Annual"). Behaviour on charge, labor, expense and shipping lines is untested. Read the line back if the period matters.'
         },
         isTaxable: {
           type: 'boolean',

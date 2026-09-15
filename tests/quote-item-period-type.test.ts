@@ -121,6 +121,49 @@ describe('autotask_create_quote_item schema', () => {
   });
 });
 
+describe('periodType descriptions state that the caller often does not control it', () => {
+  // The original wording said the opposite of what the API does:
+  //
+  //   "Set it for recurring service lines -- Autotask treats an unset line as
+  //    one-time, so a monthly service quoted without it bills once."
+  //
+  // Verified live on 2026-09-15 against quote 5150, service 3 (own periodType
+  // 2): sent 4 -> stored 2; sent 1 -> stored 2. Autotask takes the SERVICE's
+  // period and discards the caller's, silently. On a product line an
+  // incompatible value is rejected instead:
+  //
+  //   "When QuoteItem.quoteItemType is set to Product(1) the
+  //    QuoteItem.periodType may not be Semi-Annual."
+  //
+  // A description is the interface for an LLM-facing tool -- it is what the
+  // model reads to decide what to pass -- so text that promises control the
+  // API does not give is a real defect, and one that would have had a model
+  // "fix" a non-problem by setting a field with no effect.
+
+  const TOOLS = ['autotask_create_quote_item', 'autotask_update_quote_item'];
+
+  test.each(TOOLS)('%s says the value is not always the caller\'s', (tool) => {
+    const d = propsOf(tool).periodType?.description ?? '';
+    expect(d).toMatch(/not caller-controlled/i);
+    expect(d).toMatch(/service/i);
+  });
+
+  test.each(TOOLS)('%s no longer claims an unset line bills once', (tool) => {
+    // The specific false promise, pinned by its shape rather than its exact
+    // words so a reworded version of the same claim still fails.
+    const d = propsOf(tool).periodType?.description ?? '';
+    expect(d).not.toMatch(/unset line as one-time/i);
+    expect(d).not.toMatch(/bills once/i);
+    expect(d).not.toMatch(/set it for recurring service lines/i);
+  });
+
+  test('the tool description does not promise it either', () => {
+    const tool = TOOL_DEFINITIONS.find(t => t.name === 'autotask_create_quote_item')!;
+    expect(tool.description).not.toMatch(/bills as one-time|line bills as one-time/i);
+    expect(tool.description).toMatch(/periodType/);
+  });
+});
+
 describe('autotask_update_quote_item schema', () => {
   // The paired endpoint had the same gap. Without it a line created with the
   // wrong periodType could not be corrected through the tool at all -- the
