@@ -68,6 +68,11 @@ function captureCalls(): () => Call[] {
     const method = (init?.method || 'GET').toUpperCase();
     const body = init?.body ? JSON.parse(init.body as string) : undefined;
     calls.push({ method, url, body });
+    // updateQuoteItem reads the item to resolve its parent quote for the
+    // Quotes/{quoteID}/Items child route.
+    if (method === 'GET' && /\/QuoteItems\/\d+$/.test(url)) {
+      return ok({ item: { id: 777, quoteID: 5000 } });
+    }
     return ok({ itemId: 4242 });
   });
   return () => calls;
@@ -81,9 +86,15 @@ function newHandler(): AutotaskToolHandler {
 const createdLine = (calls: Call[]) =>
   calls.find(c => c.method === 'POST' && /\/Quotes\/\d+\/Items$/.test(c.url))?.body;
 
-/** Body of the PATCH that updates the line: PATCH /QuoteItems. */
+/**
+ * Body of the PATCH that updates the line: PATCH /Quotes/{quoteID}/Items.
+ *
+ * Not `/QuoteItems` -- that collection route is absent on this zone and the
+ * PUT fallback answers 405, so update went through neither. Fixed and pinned
+ * in tests/quote-item-write-paths.test.ts.
+ */
 const patchedLine = (calls: Call[]) =>
-  calls.find(c => c.method === 'PATCH' && c.url.endsWith('/QuoteItems'))?.body;
+  calls.find(c => c.method === 'PATCH' && /\/Quotes\/\d+\/Items$/.test(c.url))?.body;
 
 const propsOf = (name: string) => {
   const t = TOOL_DEFINITIONS.find(d => d.name === name);
