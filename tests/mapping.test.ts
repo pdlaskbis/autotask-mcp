@@ -328,4 +328,93 @@ describe('MappingService', () => {
       });
     });
   });
+
+describe('a slow cache warm never blocks a caller past the deadline', () => {
+  // The bug this pins: the warm is a full-tenant walk (every company,
+  // paginated, plus every resource) and it ran INLINE in whichever request
+  // touched the cache first. On a large tenant that exceeded the MCP client's
+  // 60s timeout, so the first ticket search after startup -- and the first
+  // after each 30-minute expiry -- returned nothing, while the query
+  // underneath had finished in milliseconds.
+
+  const origTimeout = process.env.MAPPING_CACHE_WARM_TIMEOUT_MS;
+  afterEach(() => {
+    if (origTimeout === undefined) delete process.env.MAPPING_CACHE_WARM_TIMEOUT_MS;
+    else process.env.MAPPING_CACHE_WARM_TIMEOUT_MS = origTimeout;
+  });
+
+  it('gives up waiting on a hung warm and still answers', async () => {
+    process.env.MAPPING_CACHE_WARM_TIMEOUT_MS = '50';
+    const slow = createMockAutotaskService();
+    // A warm that never resolves — the pathological version of "large tenant".
+    (slow.listAllCompanies as jest.Mock).mockImplementation(() => new Promise(() => {}));
+    (slow.searchResources as jest.Mock).mockImplementation(() => new Promise(() => {}));
+    (slow as any).getCompany = jest.fn().mockResolvedValue({ id: 7, companyName: 'Direct Co' });
+
+    const started = Date.now();
+    const instance = await MappingService.create(slow, mockLogger);
+    // Falls through to the per-ID direct-get rather than waiting on the warm.
+    const name = await instance.getCompanyName(7);
+    const elapsed = Date.now() - started;
+
+    expect(name).toBe('Direct Co');
+    expect(elapsed).toBeLessThan(2000);
+  });
+
+  it('attempts a direct resource lookup while the warm is still in flight', async () => {
+    // The empty-cache short-circuit means "no Resources endpoint here", which
+    // is only a sound inference once a load has COMPLETED. While the warm is
+    // in flight the cache is empty for an entirely different reason.
+    process.env.MAPPING_CACHE_WARM_TIMEOUT_MS = '50';
+    const slow = createMockAutotaskService();
+    (slow.searchResources as jest.Mock).mockImplementation(() => new Promise(() => {}));
+    (slow.getResource as jest.Mock).mockResolvedValue({ id: 30, firstName: 'Bob', lastName: 'Jones' });
+
+    const instance = await MappingService.create(slow, mockLogger);
+    await expect(instance.getResourceName(30)).resolves.toBe('Bob Jones');
+    expect(slow.getResource).toHaveBeenCalledWith(30);
+  });
+});
+
+describe('an expired cache is served stale rather than re-warmed inline', () => {
+  it('answers from the stale cache without awaiting the refresh', async () => {
+    const svc = createMockAutotaskService();
+    const instance = await MappingService.create(svc, mockLogger);
+    expect(await instance.getCompanyName(1)).toBe('Acme Corp');
+    expect(svc.listAllCompanies).toHaveBeenCalledTimes(1);
+
+    // Force expiry, then make the refresh hang. A caller must not wait on it.
+    (instance as any).cache.lastUpdated.companies = new Date(Date.now() - 60 * 60 * 1000);
+    (instance as any).cache.lastUpdated.resources = new Date(Date.now() - 60 * 60 * 1000);
+    (svc.listAllCompanies as jest.Mock).mockImplementation(() => new Promise(() => {}));
+    (svc.searchResources as jest.Mock).mockImplementation(() => new Promise(() => {}));
+
+    const started = Date.now();
+    const name = await instance.getCompanyName(1);
+    const elapsed = Date.now() - started;
+
+    expect(name).toBe('Acme Corp');        // stale, but correct and instant
+    expect(elapsed).toBeLessThan(2000);
+    expect(svc.listAllCompanies).toHaveBeenCalledTimes(2); // refresh WAS kicked off
+  });
+});
+
+describe('a failed warm does not mark an empty cache as fresh', () => {
+  it('retries on the next lookup instead of waiting out the expiry window', async () => {
+    // initializeCache used to stamp lastUpdated for BOTH halves unconditionally,
+    // so a company load that threw still looked "refreshed" — suppressing any
+    // retry for the full 30 minutes and silently disabling company names.
+    const svc = createMockAutotaskService();
+    (svc.listAllCompanies as jest.Mock).mockRejectedValueOnce(new Error('boom'));
+    (svc as any).getCompany = jest.fn().mockResolvedValue(null);
+
+    const instance = await MappingService.create(svc, mockLogger);
+    expect((instance as any).cache.lastUpdated.companies).toBeNull();
+
+    // Next lookup must try the load again rather than treating empty as current.
+    (svc.listAllCompanies as jest.Mock).mockResolvedValue([{ id: 5, companyName: 'Later Co' }]);
+    await instance.getCompanyName(5);
+    expect(svc.listAllCompanies).toHaveBeenCalledTimes(2);
+  });
+});
 });
