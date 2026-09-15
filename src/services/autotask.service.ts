@@ -299,7 +299,23 @@ export class AutotaskService {
     const http = await this.ensureClient();
     try {
       this.logger.debug('Creating contact:', contact);
-      const id = await http.create('Contacts', contact);
+      // Autotask rejects a contact create that omits isActive:
+      //   HTTP 500 "Missing Required Field: isActive."
+      // Confirmed from the entity metadata rather than the error alone --
+      // GET /Contacts/entityInformation/fields reports isActive as
+      // isRequired: true, dataType: integer. Callers rarely think to send it,
+      // so default it to active.
+      //
+      // Normalised to 1/0 because the field is an INTEGER, not a boolean. The
+      // tool schema exposes it as a boolean because that is the honest shape
+      // for a caller, so `true`/`false` have to be converted here rather than
+      // relied on to coerce server-side. An explicit false/0 is honoured.
+      const payload: Record<string, any> = { ...(contact as Record<string, any>) };
+      payload.isActive =
+        payload.isActive === undefined || payload.isActive === null
+          ? 1
+          : (payload.isActive ? 1 : 0);
+      const id = await http.create('Contacts', payload);
       this.logger.info(`Contact created with ID: ${id}`);
       return id;
     } catch (error) {
