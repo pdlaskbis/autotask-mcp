@@ -388,6 +388,9 @@ export interface AutotaskQuoteItem {
   lineDiscount?: number;
   percentageDiscount?: number;
   isOptional?: boolean;
+  isTaxable?: boolean;
+  /** 1=One-Time, 2=Monthly, 3=Quarterly, 4=Semi-Annual, 5=Yearly. */
+  periodType?: number;
   productID?: number;
   serviceID?: number;
   serviceBundleID?: number;

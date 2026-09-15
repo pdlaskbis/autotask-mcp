@@ -1942,13 +1942,21 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   },
   {
     name: 'autotask_create_quote_item',
-    description: 'Create a line item on a quote. Set exactly ONE item reference (serviceID, productID, or serviceBundleID). Required: quoteId, quantity. Defaults: unitDiscount=0, lineDiscount=0, percentageDiscount=0, isOptional=false.',
+    description: 'Create a line item on a quote. Set exactly ONE item reference (serviceID, productID, or serviceBundleID). Required: quoteId, quantity. Set periodType for recurring service lines (2=Monthly) or the line bills as one-time. Defaults: unitDiscount=0, lineDiscount=0, percentageDiscount=0, isOptional=false.',
     inputSchema: {
       type: 'object',
       properties: {
         quoteId: {
           type: 'number',
           description: 'The quote ID to add this item to'
+        },
+        periodType: {
+          type: 'number',
+          description: 'Billing period for the line: 1=One-Time, 2=Monthly, 3=Quarterly, 4=Semi-Annual, 5=Yearly. Set it for recurring service lines — Autotask treats an unset line as one-time, so a monthly service quoted without it bills once.'
+        },
+        isTaxable: {
+          type: 'boolean',
+          description: 'Whether this line item is taxable.'
         },
         name: {
           type: 'string',
@@ -2019,6 +2027,14 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         quoteItemId: {
           type: 'number',
           description: 'The quote item ID to update'
+        },
+        periodType: {
+          type: 'number',
+          description: 'Billing period for the line: 1=One-Time, 2=Monthly, 3=Quarterly, 4=Semi-Annual, 5=Yearly. Set it for recurring service lines — Autotask treats an unset line as one-time, so a monthly service quoted without it bills once.'
+        },
+        isTaxable: {
+          type: 'boolean',
+          description: 'Whether this line item is taxable.'
         },
         quantity: {
           type: 'number',
