@@ -255,3 +255,73 @@ describe('autotask_create_project', () => {
     expect(estimateKey(created)).toBe(estimateKey(updated));
   });
 });
+
+// ---------------------------------------------------------------------------
+// TimeEntry.projectID on the READ path (follow-up to the write-path fix above)
+// ---------------------------------------------------------------------------
+//
+// Removing projectID from autotask_create_time_entry left it live on
+// autotask_search_time_entries, which still advertised `projectId` and mapped
+// it to a filter on `projectID`. Unlike a write -- where Autotask ignores an
+// unknown field -- a QUERY on a field that does not exist is rejected outright:
+//
+//   HTTP 500: Unable to find projectID in the TimeEntry Entity.
+//
+// So the parameter was not inert. Passing the thing the schema advertised
+// turned a working search into a guaranteed failure.
+
+describe('TimeEntry has no projectID on the read path either', () => {
+  test('autotask_search_time_entries does not advertise projectId', () => {
+    const tool = TOOL_DEFINITIONS.find(t => t.name === 'autotask_search_time_entries');
+    expect(tool).toBeDefined();
+    const props = tool!.inputSchema.properties as Record<string, unknown>;
+    expect('projectId' in props).toBe(false);
+    expect('projectID' in props).toBe(false);
+  });
+
+  test('its description does not offer project as a filter dimension', () => {
+    const tool = TOOL_DEFINITIONS.find(t => t.name === 'autotask_search_time_entries');
+    // The description may still mention projects to explain that project work
+    // is reached via tasks; what it must not do is list project as a filter.
+    expect(tool!.description).not.toMatch(/filtered by[^.]*\bproject\b[^.]*\btask\b/i);
+  });
+
+  test('searchTimeEntries never sends a projectID filter', async () => {
+    let captured: any[] = [];
+    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      const body = JSON.parse((init as any)!.body as string);
+      if (body?.filter) captured = body.filter;
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ items: [], pageDetails: { nextPageUrl: null } }),
+        json: async () => ({ items: [], pageDetails: { nextPageUrl: null } }),
+      } as unknown as Response;
+    });
+
+    try {
+      const service = new AutotaskService(
+        {
+          name: 'test-server',
+          version: '1.0.0',
+          autotask: {
+            username: 'u',
+            secret: 's',
+            integrationCode: 'i',
+            apiUrl: 'https://example.autotask.net/atservicesrest/',
+          },
+        } as McpServerConfig,
+        new Logger('error')
+      );
+
+      // Feed projectId in deliberately: removing it from the schema does not
+      // stop it arriving, because autotask_execute_tool forwards arbitrary args.
+      await service.searchTimeEntries({ projectId: 123, ticketId: 7 } as any);
+
+      expect(captured.some((f: any) => f.field === 'projectID')).toBe(false);
+      expect(captured).toContainEqual({ op: 'eq', field: 'ticketID', value: 7 });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});

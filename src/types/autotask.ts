@@ -108,7 +108,10 @@ export interface AutotaskTimeEntry {
   id?: number;
   resourceID?: number;
   ticketID?: number;
-  projectID?: number;
+  // No projectID: the TimeEntry entity has no such field. Autotask answers a
+  // query filtering on it with "Unable to find projectID in the TimeEntry
+  // Entity". Project work is logged against a TASK, which belongs to the
+  // project.
   taskID?: number;
   dateWorked?: string;
   startDateTime?: string;

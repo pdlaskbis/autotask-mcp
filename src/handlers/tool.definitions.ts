@@ -2504,7 +2504,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   // Time Entries search tool
   {
     name: 'autotask_search_time_entries',
-    description: 'Search for time entries in Autotask. Returns 25 results per page by default. Time entries can be filtered by resource, ticket, project, task, date range, or approval status. Use approvalStatus="unapproved" to find entries not yet posted. Common fan-out target — scope by date range first to avoid Autotask\'s API threshold.',
+    description: 'Search for time entries in Autotask. Returns 25 results per page by default. Time entries can be filtered by resource, ticket, task, date range, or approval status. To find time logged against a project, filter by its tasks — the TimeEntry entity has no project field. Use approvalStatus="unapproved" to find entries not yet posted. Common fan-out target — scope by date range first to avoid Autotask\'s API threshold.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2515,10 +2515,6 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         ticketId: {
           type: 'number',
           description: 'Filter by ticket ID'
-        },
-        projectId: {
-          type: 'number',
-          description: 'Filter by project ID'
         },
         taskId: {
           type: 'number',

@@ -611,12 +611,6 @@ export class AutotaskService {
         this.logger.info(`Time entry created with ID: ${id}`);
         return id;
       }
-      // Project-scoped
-      if (timeEntry.projectID) {
-        const id = await http.childCreate('Projects', timeEntry.projectID, 'TimeEntries', timeEntry);
-        this.logger.info(`Time entry created with ID: ${id}`);
-        return id;
-      }
       // Regular (no parent — meetings, admin, etc.)
       // Autotask accepts a POST /TimeEntries with no parent for regular entries.
       const id = await http.create('TimeEntries', timeEntry);
@@ -2157,9 +2151,6 @@ export class AutotaskService {
       }
       if ((options as any).ticketId !== undefined) {
         filters.push({ op: 'eq', field: 'ticketID', value: (options as any).ticketId });
-      }
-      if ((options as any).projectId !== undefined) {
-        filters.push({ op: 'eq', field: 'projectID', value: (options as any).projectId });
       }
       if ((options as any).taskId !== undefined) {
         filters.push({ op: 'eq', field: 'taskID', value: (options as any).taskId });
