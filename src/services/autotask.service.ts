@@ -44,7 +44,10 @@ import {
   AutotaskServiceCall,
   AutotaskServiceCallTicket,
   AutotaskServiceCallTicketResource,
-  AutotaskPhase
+  AutotaskPhase,
+  AutotaskResourceRole,
+  AutotaskRole,
+  AutotaskResourceRoleSummary
 } from '../types/autotask';
 import { McpServerConfig } from '../types/mcp';
 import { Logger } from '../utils/logger';
@@ -685,22 +688,12 @@ export class AutotaskService {
     try {
       this.logger.debug('Creating time entry:', timeEntry);
 
-      // Ticket-scoped
-      if (timeEntry.ticketID) {
-        const id = await http.childCreate('Tickets', timeEntry.ticketID, 'TimeEntries', timeEntry);
-        this.logger.info(`Time entry created with ID: ${id}`);
-        return id;
-      }
-      // Task-scoped
-      if (timeEntry.taskID) {
-        const id = await http.childCreate('Tasks', timeEntry.taskID, 'TimeEntries', timeEntry);
-        this.logger.info(`Time entry created with ID: ${id}`);
-        return id;
-      }
-      // Regular (no parent — meetings, admin, etc.)
-      // Autotask accepts a POST /TimeEntries with no parent for regular entries.
+      // TimeEntries is a top-level Autotask entity, not a child of Tickets or
+      // Tasks: POST /Tickets/{id}/TimeEntries and POST /Tasks/{id}/TimeEntries
+      // do not exist and 404. The parent travels in the payload as ticketID
+      // or taskID; a parentless entry (Regular Time) sends neither.
       const id = await http.create('TimeEntries', timeEntry);
-      this.logger.info(`Regular time entry created with ID: ${id}`);
+      this.logger.info(`Time entry created with ID: ${id}`);
       return id;
     } catch (error) {
       this.logger.error('Failed to create time entry:', error);
@@ -805,6 +798,65 @@ export class AutotaskService {
       return results[0] || null;
     } catch (error) {
       this.logger.error(`Failed to resolve billing code "${name}":`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * The billing roles a resource holds (Autotask ResourceRoles joined to
+   * Roles for the names). Active assignments only unless asked otherwise.
+   *
+   * Autotask keeps a ResourceRoles row per (resource, role, department/queue),
+   * so a person with one role across several queues/departments would
+   * otherwise come back once per queue. De-duplicated on roleID: one row per
+   * ROLE, not per assignment.
+   */
+  async searchResourceRoles(resourceId: number, includeInactive = false): Promise<AutotaskResourceRoleSummary[]> {
+    const http = await this.ensureClient();
+    try {
+      this.logger.debug(`Searching roles for resource ${resourceId}`);
+      const filters: QueryFilter[] = [{ op: 'eq', field: 'resourceID', value: resourceId }];
+      if (!includeInactive) {
+        filters.push({ op: 'eq', field: 'isActive', value: true });
+      }
+      const assignments = await http.query<AutotaskResourceRole>('ResourceRoles', filters, { maxRecords: 100 });
+      if (assignments.length === 0) {
+        return [];
+      }
+      const roleIds = [...new Set(assignments.map(a => a.roleID))];
+      const roles = await http.query<AutotaskRole>(
+        'Roles',
+        [{ op: 'in', field: 'id', value: roleIds }],
+        { maxRecords: Math.max(roleIds.length, 1) }
+      );
+      const byId = new Map(roles.map(r => [r.id, r]));
+      const summaries: AutotaskResourceRoleSummary[] = [];
+      const seen = new Set<number>();
+      for (const a of assignments) {
+        if (seen.has(a.roleID)) {
+          // Same role, another department/queue assignment: OR the isDefault
+          // flag into the existing summary rather than adding a second row.
+          if (a.isDefault) {
+            const existing = summaries.find(s => s.roleID === a.roleID);
+            if (existing) existing.isDefault = true;
+          }
+          continue;
+        }
+        seen.add(a.roleID);
+        summaries.push({
+          roleID: a.roleID,
+          roleName: byId.get(a.roleID)?.name ?? `Role ${a.roleID}`,
+          resourceID: a.resourceID,
+          isActive: a.isActive !== false,
+          isDefault: a.isDefault === true,
+          departmentID: a.departmentID,
+          hourlyRate: a.hourlyRate,
+        });
+      }
+      this.logger.info(`Retrieved ${summaries.length} roles for resource ${resourceId}`);
+      return summaries;
+    } catch (error) {
+      this.logger.error(`Failed to search roles for resource ${resourceId}:`, error);
       throw error;
     }
   }
