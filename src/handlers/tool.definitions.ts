@@ -860,7 +860,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   // Time entry tools
   {
     name: 'autotask_create_time_entry',
-    description: 'Create a time entry in Autotask. Can be tied to a ticket or a task, OR created as "Regular Time" (no parent) for meetings, admin work, etc. For Regular Time, specify a category like "Internal Meeting", "Office Management", "Training", etc. Time is not logged against a project directly -- log it against a task within the project.',
+    description: 'Create a time entry in Autotask. Can be tied to a ticket or a task, OR created as "Regular Time" (no parent) for meetings, admin work, etc. For Regular Time, specify a category like "Internal Meeting", "Office Management", "Training", etc. Time is not logged against a project directly -- log it against a task within the project. A ticket/task entry also needs a roleID, normally resolved automatically; see roleID for the order and when it instead asks for roleName or roleID.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -879,6 +879,14 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         resourceName: {
           type: 'string',
           description: 'Name of the resource/user (e.g., "Will Spence"). Will be resolved to a resourceID automatically. Use this instead of resourceID for convenience.'
+        },
+        roleID: {
+          type: 'number',
+          description: 'Role ID for a ticket/task time entry -- must be one of the logging resource\'s active roles (see autotask_search_resource_roles). Ignored for Regular Time. Optional: when omitted, the parent ticket/task\'s assigned role is used if that parent is assigned to this same resource, else the resource\'s only active role, else their role flagged as default; a resource with several roles and none flagged default must be told which one (roleName or roleID).'
+        },
+        roleName: {
+          type: 'string',
+          description: 'Name of the logging resource\'s role, e.g. "Help Desk", used instead of roleID for a ticket/task time entry. Case-insensitive; must match exactly one of the resource\'s active roles. Ignored for Regular Time.'
         },
         category: {
           type: 'string',
@@ -1097,6 +1105,30 @@ export const TOOL_DEFINITIONS: McpTool[] = [
       },
       required: []
     }
+  },
+
+  {
+    name: 'autotask_search_resource_roles',
+    description: 'List the billing roles a resource (user) holds in Autotask, with names and role IDs. A ticket assigned to a resource and every ticket/task time entry need one of these role IDs; this is where to find them instead of guessing. Give resourceId or resourceName. Active roles only unless includeInactive is true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        resourceId: {
+          type: 'number',
+          description: 'Resource (user) ID'
+        },
+        resourceName: {
+          type: 'string',
+          description: 'Resource name, e.g. "Will Spence", resolved to a resourceId when resourceId is not given'
+        },
+        includeInactive: {
+          type: 'boolean',
+          description: 'Also list inactive role assignments (default false)'
+        }
+      },
+      required: []
+    },
+    annotations: { readOnlyHint: true }
   },
 
   // Ticket Notes tools
@@ -3101,7 +3133,7 @@ export const TOOL_CATEGORIES: Record<string, { description: string; tools: strin
   },
   resources: {
     description: 'Search for Autotask resources (technicians/staff)',
-    tools: ['autotask_search_resources']
+    tools: ['autotask_search_resources', 'autotask_search_resource_roles']
   },
   configuration_items: {
     description: 'Search configuration items (assets/devices)',

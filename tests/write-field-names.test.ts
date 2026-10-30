@@ -94,6 +94,7 @@ describe('autotask_create_time_entry', () => {
     const service = new AutotaskService(mockConfig, mockLogger);
     const spy = jest.spyOn(service, 'createTimeEntry').mockResolvedValue(1 as any);
     const resolve = jest.spyOn(service, 'resolveResourceByName');
+    jest.spyOn(service, 'getTicket').mockResolvedValue({ id: 4004, assignedResourceID: 2002, assignedResourceRoleID: 55 } as any);
     const handler = new AutotaskToolHandler(service, mockLogger);
 
     await handler.callTool('autotask_create_time_entry', {
@@ -110,6 +111,7 @@ describe('autotask_create_time_entry', () => {
     const service = new AutotaskService(mockConfig, mockLogger);
     const spy = jest.spyOn(service, 'createTimeEntry').mockResolvedValue(1 as any);
     jest.spyOn(service, 'resolveResourceByName').mockResolvedValue({ id: 3003 } as any);
+    jest.spyOn(service, 'getTicket').mockResolvedValue({ id: 4004, assignedResourceID: 3003, assignedResourceRoleID: 55 } as any);
     const handler = new AutotaskToolHandler(service, mockLogger);
 
     await handler.callTool('autotask_create_time_entry', {
@@ -130,6 +132,7 @@ describe('autotask_create_time_entry', () => {
     // holding the delete is skipped entirely.
     const service = new AutotaskService(mockConfig, mockLogger);
     const spy = jest.spyOn(service, 'createTimeEntry').mockResolvedValue(1 as any);
+    jest.spyOn(service, 'getTicket').mockResolvedValue({ id: 4004, assignedResourceID: 2002, assignedResourceRoleID: 55 } as any);
     const handler = new AutotaskToolHandler(service, mockLogger);
 
     await handler.callTool('autotask_create_time_entry', {
@@ -163,6 +166,7 @@ describe('autotask_create_time_entry', () => {
   test('never sends projectID, even when one is passed anyway', async () => {
     const service = new AutotaskService(mockConfig, mockLogger);
     const spy = jest.spyOn(service, 'createTimeEntry').mockResolvedValue(1 as any);
+    jest.spyOn(service, 'getTicket').mockResolvedValue({ id: 4004, assignedResourceID: 2002, assignedResourceRoleID: 55 } as any);
     const handler = new AutotaskToolHandler(service, mockLogger);
 
     await handler.callTool('autotask_create_time_entry', { ...baseArgs, projectID: 9001 });

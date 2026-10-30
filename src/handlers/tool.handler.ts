@@ -790,6 +790,87 @@ export class AutotaskToolHandler {
     return TOOL_DEFINITIONS;
   }
 
+  private async loadTimeEntryParent(kind: 'Ticket' | 'Task', id: number): Promise<{ assignedResourceID?: number | null; assignedResourceRoleID?: number | null }> {
+    const parent = kind === 'Ticket'
+      ? await this.autotaskService.getTicket(id)
+      : await this.autotaskService.getTask(id);
+    if (parent === null) {
+      throw new Error(`No ${kind} found matching "${id}"`);
+    }
+    return parent as { assignedResourceID?: number | null; assignedResourceRoleID?: number | null };
+  }
+
+  /**
+   * The roleID for a ticket/task time entry, in order:
+   *
+   * 1. An explicit roleID, verified against the logging resource's active
+   *    roles (Autotask rejects a wrong id with a message that names nothing
+   *    useful, so this is checked here instead).
+   * 2. An explicit roleName, matched case-insensitively against exactly one
+   *    active role.
+   * 3. The parent ticket/task's assigned role, but only when the parent is
+   *    assigned to this SAME resource -- a role must be one of the logging
+   *    resource's own.
+   * 4. The resource's only active role.
+   * 5. The resource's active role flagged isDefault.
+   * 6. Otherwise: refused, with the resource's active roles spelled out.
+   */
+  private async resolveTimeEntryRoleID(a: Record<string, any>): Promise<number> {
+    const describe = (list: Awaited<ReturnType<AutotaskService['searchResourceRoles']>>): string =>
+      list.map(r => `${r.roleName} (roleID ${r.roleID})`).join(', ');
+
+    // Step 1: an explicit roleID, but verified -- a wrong id must not reach
+    // Autotask, which rejects it with a message naming nothing useful.
+    if (a.roleID !== undefined) {
+      const roles = await this.autotaskService.searchResourceRoles(a.resourceID);
+      const match = roles.find(r => r.roleID === a.roleID);
+      if (!match) {
+        throw new Error(
+          `roleID ${a.roleID} is not one of resource ${a.resourceID}'s active roles` +
+          (roles.length > 0 ? `: ${describe(roles)}.` : ', which has no active roles.')
+        );
+      }
+      return match.roleID;
+    }
+
+    // Step 2: an explicit roleName, matched case-insensitively.
+    if (a.roleName) {
+      const roles = await this.autotaskService.searchResourceRoles(a.resourceID);
+      const wanted = String(a.roleName).trim().toLowerCase();
+      const matches = roles.filter(r => r.roleName.toLowerCase() === wanted);
+      if (matches.length === 1) {
+        return matches[0].roleID;
+      }
+      throw new Error(matches.length === 0
+        ? `Resource ${a.resourceID} has no active role named "${a.roleName}".` + (roles.length > 0 ? ` Their roles: ${describe(roles)}.` : '')
+        : `"${a.roleName}" matches more than one of resource ${a.resourceID}'s active roles: ${describe(matches)}. Give the exact role name.`);
+    }
+
+    // Step 3: the parent's assigned role, only when the parent is assigned
+    // to this SAME resource -- a role must be one of the resource's own.
+    const kind: 'Ticket' | 'Task' = a.taskID ? 'Task' : 'Ticket';
+    const parent = await this.loadTimeEntryParent(kind, a.taskID ?? a.ticketID);
+    if (parent.assignedResourceRoleID != null && parent.assignedResourceID === a.resourceID) {
+      return parent.assignedResourceRoleID;
+    }
+
+    // Steps 4-6 all decide from the resource's own active roles.
+    const roles = await this.autotaskService.searchResourceRoles(a.resourceID);
+
+    if (roles.length === 1) {
+      return roles[0].roleID;
+    }
+
+    const defaultRole = roles.find(r => r.isDefault);
+    if (defaultRole) {
+      return defaultRole.roleID;
+    }
+
+    throw new Error(roles.length === 0
+      ? `Resource ${a.resourceID} has no active roles in Autotask, so no roleID can be chosen for them. Pass roleName or roleID, or ask an Autotask administrator to assign the resource a role.`
+      : `Resource ${a.resourceID} holds ${roles.length} active roles and none is marked default: ${describe(roles)}. Pass roleName or roleID to choose.`);
+  }
+
   /**
    * Dispatch table: maps tool names to handler functions
    */
@@ -1007,6 +1088,14 @@ export class AutotaskToolHandler {
         // ticket or task never reached the Regular Time branch, so it was
         // forwarded verbatim and silently ignored by Autotask.
         delete a.category;
+        // A ticket/task time entry must carry a roleID that is one of THIS
+        // resource's active roles -- Regular Time has no parent to assign a
+        // role against, so the lookup never runs for it.
+        if (!isRegularTime) {
+          a.roleID = await this.resolveTimeEntryRoleID(a);
+        }
+        // roleName is a convenience input resolved above, not a TimeEntry field.
+        delete a.roleName;
         const id = await s.createTimeEntry(a); return { result: id, message: `Successfully created time entry with ID: ${id}` };
       }],
 
@@ -1062,6 +1151,26 @@ export class AutotaskToolHandler {
       // Resources
       ['autotask_search_resources', async (a) => {
         const r = await s.searchResources(a); return { result: r, message: `Found ${r.length} resources` };
+      }],
+      ['autotask_search_resource_roles', async (a) => {
+        let resourceId: number | undefined = a.resourceId;
+        if (resourceId === undefined && a.resourceName) {
+          const resource = await s.resolveResourceByName(a.resourceName);
+          if (!resource) {
+            throw new Error(`No resource found matching "${a.resourceName}"`);
+          }
+          resourceId = resource.id;
+        }
+        if (resourceId === undefined) {
+          throw new Error('Provide resourceId or resourceName.');
+        }
+        const r = await s.searchResourceRoles(resourceId, a.includeInactive === true);
+        return {
+          result: r,
+          message: r.length === 0
+            ? `Resource ${resourceId} has no ${a.includeInactive ? '' : 'active '}roles.`
+            : `Resource ${resourceId} holds ${r.length} role(s): ${r.map(x => `${x.roleName} (roleID ${x.roleID})`).join(', ')}`
+        };
       }],
 
       // Configuration Items

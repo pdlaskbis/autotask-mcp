@@ -40,6 +40,7 @@ export interface AutotaskTicket {
   companyID?: number;
   contactID?: number;
   assignedResourceID?: number;
+  assignedResourceRoleID?: number;
   title?: string;
   description?: string;
   status?: number;
@@ -107,6 +108,7 @@ export interface AutotaskProject {
 export interface AutotaskTimeEntry {
   id?: number;
   resourceID?: number;
+  roleID?: number;
   ticketID?: number;
   // No projectID: the TimeEntry entity has no such field. Autotask answers a
   // query filtering on it with "Unable to find projectID in the TimeEntry
@@ -183,6 +185,7 @@ export interface AutotaskTask {
   title?: string;
   description?: string;
   assignedResourceID?: number;
+  assignedResourceRoleID?: number;
   status?: number;
   priority?: number;
   startDate?: string;
@@ -606,4 +609,41 @@ export enum CompanyType {
   DeadLead = 4,
   Vendor = 5,
   Partner = 6
+}
+
+/**
+ * One row of Autotask's ResourceRoles entity: a resource's assignment to a
+ * billing role. Every ticket/task time entry must carry a roleID that is one
+ * of the entry's resource's ACTIVE assignments.
+ */
+export interface AutotaskResourceRole {
+  id: number;
+  resourceID: number;
+  roleID: number;
+  departmentID?: number;
+  queueID?: number;
+  hourlyRate?: number;
+  isActive?: boolean;
+  isDefault?: boolean;
+}
+
+/** Autotask's Roles entity: the billing role a ResourceRoles row points at. */
+export interface AutotaskRole {
+  id: number;
+  name: string;
+  description?: string;
+  isActive?: boolean;
+  isSystemRole?: boolean;
+  hourlyRate?: number;
+}
+
+/** What searchResourceRoles() returns: an assignment joined to its role's name. */
+export interface AutotaskResourceRoleSummary {
+  roleID: number;
+  roleName: string;
+  resourceID: number;
+  isActive: boolean;
+  isDefault?: boolean;
+  departmentID?: number | undefined;
+  hourlyRate?: number | undefined;
 } 
