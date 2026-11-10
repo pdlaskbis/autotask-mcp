@@ -1196,6 +1196,17 @@ export class AutotaskToolHandler {
         const { id, ...rest } = a;
         await s.updateContractService(id, rest); return { result: undefined, message: `Successfully updated contract service ID: ${id}` };
       }],
+      ['autotask_create_contract_service_adjustment', async (a) => {
+        const res = await s.createContractServiceAdjustment(a);
+        const first = res.units[0];
+        const readBack = first
+          ? `read back: ${first.units} units at ${first.price} for ${String(first.startDate).slice(0, 10)}`
+          : 'read back: NO unit rows found from that date — the adjustment did not take effect; check the contract dates';
+        return {
+          result: res,
+          message: `Adjusted contract service ${a.contractServiceID} by ${res.unitChange} units from ${res.effectiveDate}; ${readBack}`,
+        };
+      }],
 
       // Raw REST passthrough (escape hatch)
       ['autotask_raw_request', async (a) => {

@@ -406,6 +406,17 @@ export class AutotaskHttpClient {
   }
 
   /**
+   * POST /{Entity} for entities whose create response carries NO itemId.
+   * ContractServiceAdjustments is one: Autotask answers `{ itemId: null }`
+   * because an adjustment is applied to ContractServiceUnits rather than
+   * stored as a row of its own. `create()` would throw on that response, so
+   * callers of this method must verify the effect by reading it back.
+   */
+  async createWithoutId(entity: string, body: any): Promise<void> {
+    await this.request<unknown>('POST', `/${entity}`, body);
+  }
+
+  /**
    * PATCH /{Entity} with body `{id, ...fields}`. This is the Autotask update
    * pattern — there is NO PATCH /{Entity}/{id} route (the SDK's default
    * generates one and gets 405 Method Not Allowed for every update).
