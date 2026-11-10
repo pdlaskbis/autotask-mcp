@@ -3068,6 +3068,23 @@ export const TOOL_DEFINITIONS: McpTool[] = [
     }
   },
   {
+    name: 'autotask_create_contract_service_adjustment',
+    description: 'Add or remove units on a ContractService line from a given date. A new contract service line starts at 0 units, so this is the step that makes it bill. Positive unitChange adds units, negative removes them; the change applies to every billing period from effectiveDate on. Returns the unit rows read back after the change so the result can be checked.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        contractID: { type: 'number', description: 'Parent Contract ID' },
+        contractServiceID: { type: 'number', description: 'ContractService line to adjust (the id returned by autotask_create_contract_service)' },
+        effectiveDate: { type: 'string', description: 'First day the change applies (YYYY-MM-DD), normally the first day of a billing period' },
+        unitChange: { type: 'number', description: 'Units to add (positive) or remove (negative). Not the new total.' },
+        adjustedUnitPrice: { type: 'number', description: 'Unit price for the adjusted units; defaults to the line price' },
+        adjustedUnitCost: { type: 'number', description: 'Unit cost for the adjusted units; defaults to the line cost' },
+        allowRepeatService: { type: 'boolean', description: 'Allow the same service to repeat on the contract (default false)' }
+      },
+      required: ['contractID', 'contractServiceID', 'effectiveDate', 'unitChange']
+    }
+  },
+  {
     name: 'autotask_raw_request',
     description: 'Escape hatch for Autotask REST endpoints not yet wrapped by a typed tool. Use sparingly — typed tools are preferred for safety. The existing Content-Type, Accept, ApiIntegrationcode, UserName, Secret headers are added automatically. The path is resolved against the zone-resolved base URL (https://webservices<N>.autotask.net/ATServicesRest/v1.0). Pass queryParams as a flat object of string/number/boolean values; they will be URL-encoded and appended to the path.',
     inputSchema: {

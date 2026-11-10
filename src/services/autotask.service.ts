@@ -1126,11 +1126,20 @@ export class AutotaskService {
     }
   }
 
+  // ContractServices are a CHILD of Contracts for writes: Autotask only accepts
+  // POST/PATCH /Contracts/{contractID}/Services. The top-level
+  // POST /ContractServices route does not exist and returns an IIS HTML 404
+  // (seen live 2026-11-10 adding Rampart ATP to Brown Financial contract
+  // 30246025; the same payload via POST /Contracts/30246025/Services succeeded).
   async createContractService(cs: Record<string, any>): Promise<number> {
     const http = await this.ensureClient();
+    const contractID = Number(cs?.contractID);
+    if (!Number.isFinite(contractID) || contractID <= 0) {
+      throw new Error('createContractService: contractID is required (ContractServices are created under /Contracts/{contractID}/Services)');
+    }
     try {
       this.logger.debug('Creating contract service:', cs);
-      const id = await http.create('ContractServices', cs);
+      const id = await http.childCreate('Contracts', contractID, 'Services', { ...cs, contractID });
       this.logger.info(`ContractService created with ID: ${id}`);
       return id;
     } catch (error) {
@@ -1141,12 +1150,80 @@ export class AutotaskService {
 
   async updateContractService(id: number, updates: Record<string, any>): Promise<void> {
     const http = await this.ensureClient();
+    const contractID = Number(updates?.contractID);
+    if (!Number.isFinite(contractID) || contractID <= 0) {
+      throw new Error('updateContractService: contractID is required (ContractServices are updated under /Contracts/{contractID}/Services)');
+    }
     try {
       this.logger.debug(`Updating contract service ${id}:`, updates);
-      await http.update('ContractServices', id, updates);
+      await http.childUpdate('Contracts', contractID, 'Services', id, { ...updates, contractID });
       this.logger.info(`ContractService ${id} updated successfully`);
     } catch (error) {
       this.logger.error(`Failed to update contract service ${id}:`, error);
+      throw error;
+    }
+  }
+
+  // Units on a ContractService are not a field on the line: a new line starts
+  // at 0 units and every change is a POST /ContractServiceAdjustments, which
+  // Autotask applies to the ContractServiceUnits rows from effectiveDate on.
+  // The create response carries itemId: null, so success is proven by reading
+  // the unit rows back, never by the absence of an error. Seen live
+  // 2026-11-10: contract service 6875 (Rampart ATP, contract 30246025) went
+  // from 0 to 13 units effective 2026-12-01 this way.
+  async createContractServiceAdjustment(adj: {
+    contractID: number;
+    contractServiceID: number;
+    effectiveDate: string;
+    unitChange: number;
+    adjustedUnitPrice?: number;
+    adjustedUnitCost?: number;
+    allowRepeatService?: boolean;
+  }): Promise<{ effectiveDate: string; unitChange: number; units: Array<Record<string, any>> }> {
+    const http = await this.ensureClient();
+    const contractID = Number(adj?.contractID);
+    const contractServiceID = Number(adj?.contractServiceID);
+    const unitChange = Number(adj?.unitChange);
+    if (!Number.isFinite(contractID) || contractID <= 0) {
+      throw new Error('createContractServiceAdjustment: contractID is required');
+    }
+    if (!Number.isFinite(contractServiceID) || contractServiceID <= 0) {
+      throw new Error('createContractServiceAdjustment: contractServiceID is required');
+    }
+    if (!Number.isInteger(unitChange) || unitChange === 0) {
+      throw new Error('createContractServiceAdjustment: unitChange must be a non-zero whole number (positive adds units, negative removes them)');
+    }
+    if (typeof adj.effectiveDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(adj.effectiveDate)) {
+      throw new Error('createContractServiceAdjustment: effectiveDate must be YYYY-MM-DD');
+    }
+
+    const body: Record<string, any> = {
+      contractID,
+      contractServiceID,
+      effectiveDate: adj.effectiveDate,
+      unitChange,
+      allowRepeatService: adj.allowRepeatService ?? false,
+    };
+    if (adj.adjustedUnitPrice !== undefined) body.adjustedUnitPrice = adj.adjustedUnitPrice;
+    if (adj.adjustedUnitCost !== undefined) body.adjustedUnitCost = adj.adjustedUnitCost;
+
+    try {
+      this.logger.debug('Creating contract service adjustment:', body);
+      await http.createWithoutId('ContractServiceAdjustments', body);
+      const units = await http.query<Record<string, any>>(
+        'ContractServiceUnits',
+        [
+          { op: 'eq', field: 'contractServiceID', value: contractServiceID },
+          { op: 'gte', field: 'endDate', value: adj.effectiveDate },
+        ],
+        { maxRecords: 3 }
+      );
+      this.logger.info(
+        `ContractServiceAdjustment applied to contract service ${contractServiceID}: ${unitChange} units from ${adj.effectiveDate}`
+      );
+      return { effectiveDate: adj.effectiveDate, unitChange, units };
+    } catch (error) {
+      this.logger.error('Failed to create contract service adjustment:', error);
       throw error;
     }
   }
