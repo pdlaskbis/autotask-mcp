@@ -1126,11 +1126,20 @@ export class AutotaskService {
     }
   }
 
+  // ContractServices are a CHILD of Contracts for writes: Autotask only accepts
+  // POST/PATCH /Contracts/{contractID}/Services. The top-level
+  // POST /ContractServices route does not exist and returns an IIS HTML 404
+  // (seen live 2026-11-10 adding Rampart ATP to Brown Financial contract
+  // 30246025; the same payload via POST /Contracts/30246025/Services succeeded).
   async createContractService(cs: Record<string, any>): Promise<number> {
     const http = await this.ensureClient();
+    const contractID = Number(cs?.contractID);
+    if (!Number.isFinite(contractID) || contractID <= 0) {
+      throw new Error('createContractService: contractID is required (ContractServices are created under /Contracts/{contractID}/Services)');
+    }
     try {
       this.logger.debug('Creating contract service:', cs);
-      const id = await http.create('ContractServices', cs);
+      const id = await http.childCreate('Contracts', contractID, 'Services', { ...cs, contractID });
       this.logger.info(`ContractService created with ID: ${id}`);
       return id;
     } catch (error) {
@@ -1141,9 +1150,13 @@ export class AutotaskService {
 
   async updateContractService(id: number, updates: Record<string, any>): Promise<void> {
     const http = await this.ensureClient();
+    const contractID = Number(updates?.contractID);
+    if (!Number.isFinite(contractID) || contractID <= 0) {
+      throw new Error('updateContractService: contractID is required (ContractServices are updated under /Contracts/{contractID}/Services)');
+    }
     try {
       this.logger.debug(`Updating contract service ${id}:`, updates);
-      await http.update('ContractServices', id, updates);
+      await http.childUpdate('Contracts', contractID, 'Services', id, { ...updates, contractID });
       this.logger.info(`ContractService ${id} updated successfully`);
     } catch (error) {
       this.logger.error(`Failed to update contract service ${id}:`, error);
