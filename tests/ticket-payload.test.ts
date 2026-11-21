@@ -171,6 +171,45 @@ describe('ticket write payload', () => {
     });
   });
 
+  describe('asset and contract', () => {
+    // Neither tool could set a ticket's asset or contract: the fields were not
+    // declared, so skills that had found the right asset had to fall back to
+    // autotask_raw_request (T20261121.0022, 2026-11-21).
+    test('create forwards configurationItemID and contractID', async () => {
+      const service = new AutotaskService(mockConfig, mockLogger);
+      const createSpy = jest.spyOn(service, 'createTicket').mockResolvedValue(7 as any);
+      const handler = new AutotaskToolHandler(service, mockLogger);
+
+      await handler.callTool('autotask_create_ticket', {
+        companyID: 30241008,
+        title: 't',
+        description: 'd',
+        configurationItemID: 30259868,
+        contractID: 30242908
+      });
+
+      const payload = createSpy.mock.calls[0][0] as Record<string, unknown>;
+      expect(payload.configurationItemID).toBe(30259868);
+      expect(payload.contractID).toBe(30242908);
+    });
+
+    test('update forwards configurationItemID and contractID, and nothing else', async () => {
+      const service = new AutotaskService(mockConfig, mockLogger);
+      const updateSpy = jest.spyOn(service, 'updateTicket').mockResolvedValue(undefined as any);
+      const handler = new AutotaskToolHandler(service, mockLogger);
+
+      await handler.callTool('autotask_update_ticket', {
+        ticketId: 1533470,
+        configurationItemID: 30259868,
+        contractID: 30242908
+      });
+
+      const [id, payload] = updateSpy.mock.calls[0] as [number, Record<string, unknown>];
+      expect(id).toBe(1533470);
+      expect(payload).toEqual({ configurationItemID: 30259868, contractID: 30242908 });
+    });
+  });
+
   describe('payload hygiene', () => {
     test('unknown arguments are still dropped', async () => {
       // The allow-list exists for a reason; widening it must not turn into

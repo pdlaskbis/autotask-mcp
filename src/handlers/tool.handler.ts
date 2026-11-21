@@ -39,6 +39,10 @@ const TICKET_WRITABLE_FIELDS = [
   // assignedResourceID is sent without its role, so this must be forwarded.
   'assignedResourceRoleID',
   'contactID',
+  // The ticket's asset and contract. Both are plain Ticket fields in the REST API;
+  // without them here a skill could pick the right asset and never set it.
+  'configurationItemID',
+  'contractID',
   'dueDateTime',
   'queueID',
   'ticketCategory',

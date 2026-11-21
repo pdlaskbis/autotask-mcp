@@ -537,6 +537,14 @@ export const TOOL_DEFINITIONS: McpTool[] = [
           type: 'number',
           description: 'Contact ID for the ticket'
         },
+        configurationItemID: {
+          type: 'number',
+          description: 'Asset (configuration item) ID for the ticket. Must be an active asset of the same company. Use autotask_search_configuration_items to find it.'
+        },
+        contractID: {
+          type: 'number',
+          description: 'Contract ID to bill the ticket against. Must be an active contract of the same company. Use autotask_search_contracts to find it.'
+        },
         queueID: {
           type: 'number',
           description: 'Queue ID to route the ticket to. Use autotask_list_queues to discover valid IDs.'
@@ -643,6 +651,14 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         contactID: {
           type: 'number',
           description: 'Contact ID for the ticket'
+        },
+        configurationItemID: {
+          type: 'number',
+          description: 'Asset (configuration item) ID for the ticket. Must be an active asset of the same company. Use autotask_search_configuration_items to find it.'
+        },
+        contractID: {
+          type: 'number',
+          description: 'Contract ID to bill the ticket against. Must be an active contract of the same company. Use autotask_search_contracts to find it.'
         },
         issueType: {
           type: 'number',
